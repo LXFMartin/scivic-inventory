@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>SCIVIC ECIM Inventory (Azure V7.0)</title>
+<title>SCIVIC ECIM Inventory (Azure V7.1)</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 <style>
@@ -16,8 +16,9 @@ input,select{border:1px solid #ccc;border-radius:6px;padding:6px 10px;width:100%
 </style>
 </head>
 <body class="p-4">
-<h1 class="text-2xl font-bold mb-4 text-center text-blue-800">SCIVIC ECIM 库存管理系统 (Azure V7.0)</h1>
+<h1 class="text-2xl font-bold mb-4 text-center text-blue-800">SCIVIC ECIM 库存管理系统 (Azure V7.1)</h1>
 
+<!-- 登录 -->
 <div id="login-panel" class="card max-w-md mx-auto">
   <h2 class="text-lg font-semibold mb-2">登录 Login</h2>
   <label>邮箱 Email</label>
@@ -29,6 +30,7 @@ input,select{border:1px solid #ccc;border-radius:6px;padding:6px 10px;width:100%
   <p id="login-status" class="text-center text-sm text-gray-600 mt-2"></p>
 </div>
 
+<!-- 主面板 -->
 <div id="main-panel" class="hidden">
   <div class="flex justify-between items-center mb-4">
     <div>
@@ -38,6 +40,7 @@ input,select{border:1px solid #ccc;border-radius:6px;padding:6px 10px;width:100%
     <div><button id="btn-logout" class="btn btn-blue">登出 / Logout</button></div>
   </div>
 
+  <!-- 库存总览 -->
   <div id="overview" class="card">
     <h2 class="text-xl font-semibold mb-2">库存总览 / Overview</h2>
     <table class="w-full text-sm" id="tbl-overview">
@@ -46,6 +49,50 @@ input,select{border:1px solid #ccc;border-radius:6px;padding:6px 10px;width:100%
     </table>
   </div>
 
+  <!-- 入库 -->
+  <div id="inbound" class="card">
+    <h2 class="text-xl font-semibold mb-2">入库 / Inbound</h2>
+    <div class="grid md:grid-cols-3 gap-2">
+      <input id="in-model" placeholder="型号 Model"/>
+      <input id="in-storage" placeholder="库位 Storage"/>
+      <input id="in-qty" type="number" placeholder="数量 Quantity"/>
+      <input id="in-operator" placeholder="操作人 Operator"/>
+      <input id="in-comments" placeholder="备注 Comments"/>
+      <button id="btn-inbound" class="btn btn-blue col-span-3">提交入库 / Submit</button>
+    </div>
+    <p id="in-status" class="text-sm text-gray-600 mt-2"></p>
+  </div>
+
+  <!-- 出库 -->
+  <div id="outbound" class="card">
+    <h2 class="text-xl font-semibold mb-2">出库 / Outbound</h2>
+    <div class="grid md:grid-cols-3 gap-2">
+      <input id="out-model" placeholder="型号 Model"/>
+      <input id="out-storage" placeholder="库位 Storage"/>
+      <input id="out-qty" type="number" placeholder="数量 Quantity"/>
+      <input id="out-operator" placeholder="操作人 Operator"/>
+      <input id="out-comments" placeholder="备注 Comments"/>
+      <button id="btn-outbound" class="btn btn-blue col-span-3">提交出库 / Submit</button>
+    </div>
+    <p id="out-status" class="text-sm text-gray-600 mt-2"></p>
+  </div>
+
+  <!-- 移库 -->
+  <div id="transfer" class="card">
+    <h2 class="text-xl font-semibold mb-2">移库 / Transfer</h2>
+    <div class="grid md:grid-cols-3 gap-2">
+      <input id="tr-model" placeholder="型号 Model"/>
+      <input id="tr-from" placeholder="来源库位 From Storage"/>
+      <input id="tr-to" placeholder="目标库位 To Storage"/>
+      <input id="tr-qty" type="number" placeholder="数量 Quantity"/>
+      <input id="tr-operator" placeholder="操作人 Operator"/>
+      <input id="tr-comments" placeholder="备注 Comments"/>
+      <button id="btn-transfer" class="btn btn-blue col-span-3">提交移库 / Submit</button>
+    </div>
+    <p id="tr-status" class="text-sm text-gray-600 mt-2"></p>
+  </div>
+
+  <!-- 操作日志 -->
   <div id="logs" class="card">
     <h2 class="text-xl font-semibold mb-2">操作日志 / Logs</h2>
     <input id="log-search" placeholder="输入型号 / 搜索" class="mb-2"/>
@@ -59,42 +106,39 @@ input,select{border:1px solid #ccc;border-radius:6px;padding:6px 10px;width:100%
 
 <script>
 const API_BASE = "https://meston-inventory-api.azurewebsites.net/api";
-let LANG = 'zh', AUTH_EMAIL=null;
+let AUTH_EMAIL=null;
 
-const sendOtpBtn=document.getElementById('btn-send-otp');
-const loginBtn=document.getElementById('btn-login');
-const emailEl=document.getElementById('login-email');
-const otpEl=document.getElementById('login-otp');
-const statusEl=document.getElementById('login-status');
+async function apiPost(url,body){
+  const res=await fetch(API_BASE+url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  return await res.json();
+}
 
-sendOtpBtn.onclick=async()=>{
-  const email=emailEl.value.trim();
-  if(!email){statusEl.textContent='请输入邮箱';return;}
-  sendOtpBtn.disabled=true;statusEl.textContent='发送中...';
+// ==== 登录 ====
+document.getElementById('btn-send-otp').onclick=async()=>{
+  const email=document.getElementById('login-email').value.trim();
+  const status=document.getElementById('login-status');
+  if(!email){status.textContent='请输入邮箱';return;}
+  status.textContent='发送中...';
   try{
-    const res=await fetch(API_BASE+'/send_otp',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email})});
-    const j=await res.json();
-    if(j.success)statusEl.textContent='验证码已发送，请查收邮箱';
-    else statusEl.textContent='发送失败：'+(j.error||res.status);
-  }catch(e){statusEl.textContent='发送失败：'+e.message;}
-  sendOtpBtn.disabled=false;
+    const res=await apiPost('/send_otp',{email});
+    status.textContent=res.success?'验证码已发送，请查收邮箱':'发送失败：'+(res.error||'');
+  }catch(e){status.textContent='发送失败：'+e.message;}
 };
 
-loginBtn.onclick=async()=>{
-  const email=emailEl.value.trim(),otp=otpEl.value.trim();
-  if(!email||!otp){statusEl.textContent='请输入邮箱和验证码';return;}
-  statusEl.textContent='验证中...';
+document.getElementById('btn-login').onclick=async()=>{
+  const email=document.getElementById('login-email').value.trim();
+  const otp=document.getElementById('login-otp').value.trim();
+  const status=document.getElementById('login-status');
+  if(!email||!otp){status.textContent='请输入邮箱和验证码';return;}
   try{
-    const res=await fetch(API_BASE+'/dict_check?email='+encodeURIComponent(email));
-    const j=await res.json();
-    if(j.authorized){
-      localStorage.setItem('auth_email',email);
-      AUTH_EMAIL=email;
+    const r=await fetch(API_BASE+'/dict_check?email='+encodeURIComponent(email));
+    const j=await r.json();
+    if(j.authorized){localStorage.setItem('auth_email',email);AUTH_EMAIL=email;
       document.getElementById('login-panel').classList.add('hidden');
       document.getElementById('main-panel').classList.remove('hidden');
       loadOverview();loadLogs();
-    }else statusEl.textContent='未授权邮箱 / Not authorized';
-  }catch(e){statusEl.textContent='登录失败：'+e.message;}
+    }else status.textContent='未授权邮箱';
+  }catch(e){status.textContent='登录失败：'+e.message;}
 };
 
 document.getElementById('btn-logout').onclick=()=>{
@@ -108,50 +152,55 @@ window.addEventListener('load',()=>{
   if(saved){AUTH_EMAIL=saved;document.getElementById('login-panel').classList.add('hidden');document.getElementById('main-panel').classList.remove('hidden');loadOverview();loadLogs();}
 });
 
-document.getElementById('lang-cn').onclick=()=>{LANG='zh';alert('已切换中文');};
-document.getElementById('lang-en').onclick=()=>{LANG='en';alert('Switched to English');};
-
+// ==== 库存 & 日志 ====
 async function loadOverview(){
-  const tbody=document.querySelector('#tbl-overview tbody');tbody.innerHTML='加载中...';
-  try{
-    const res=await fetch(API_BASE+'/overview');const j=await res.json();
-    tbody.innerHTML='';(j.rows||[]).forEach(r=>{
-      const tr=document.createElement('tr');
-      tr.innerHTML=`<td>${r.model||''}</td><td>${r.storage||''}</td><td>${r.total||0}</td><td>${r.unit||''}</td><td>${r.last_updated||''}</td>`;
-      tbody.appendChild(tr);
-    });
-  }catch(e){tbody.innerHTML='<tr><td colspan=5>加载失败 '+e.message+'</td></tr>';}
+  const tb=document.querySelector('#tbl-overview tbody');tb.innerHTML='加载中...';
+  try{const j=await (await fetch(API_BASE+'/overview')).json();tb.innerHTML='';
+    (j.rows||[]).forEach(r=>{tb.innerHTML+=`<tr><td>${r.model}</td><td>${r.storage}</td><td>${r.total}</td><td>${r.unit}</td><td>${r.last_updated}</td></tr>`});
+  }catch(e){tb.innerHTML='<tr><td colspan=5>加载失败 '+e.message+'</td></tr>';}
 }
-
 async function loadLogs(){
-  const tbody=document.querySelector('#tbl-logs tbody');tbody.innerHTML='加载中...';
-  try{
-    const res=await fetch(API_BASE+'/logs');const j=await res.json();
-    window._logsCache=j.rows||[];renderLogs(_logsCache);
-  }catch(e){tbody.innerHTML='<tr><td colspan=7>加载失败 '+e.message+'</td></tr>';}
+  const tb=document.querySelector('#tbl-logs tbody');tb.innerHTML='加载中...';
+  try{const j=await (await fetch(API_BASE+'/logs')).json();window._logs=j.rows||[];renderLogs();}
+  catch(e){tb.innerHTML='<tr><td colspan=7>加载失败 '+e.message+'</td></tr>';}
 }
-
-function renderLogs(list){
+function renderLogs(){
   const q=document.getElementById('log-search').value.trim().toLowerCase();
-  const tbody=document.querySelector('#tbl-logs tbody');tbody.innerHTML='';
-  list.filter(r=>!q||String(r.model||'').toLowerCase().includes(q)).forEach(r=>{
-    const tr=document.createElement('tr');
-    tr.innerHTML=`<td>${r.type||''}</td><td>${r.created_at||''}</td><td>${r.model||''}</td><td>${r.quantity||0}</td><td>${r.storage||r.from_storage||r.to_storage||''}</td><td>${r.operator||''}</td><td>${r.comments||''}</td>`;
-    tbody.appendChild(tr);
+  const tb=document.querySelector('#tbl-logs tbody');tb.innerHTML='';
+  (window._logs||[]).filter(r=>!q||String(r.model||'').toLowerCase().includes(q)).forEach(r=>{
+    tb.innerHTML+=`<tr><td>${r.type}</td><td>${r.created_at}</td><td>${r.model}</td><td>${r.quantity}</td><td>${r.storage||r.from_storage||r.to_storage||''}</td><td>${r.operator||''}</td><td>${r.comments||''}</td></tr>`;
   });
 }
-
-document.getElementById('log-search').oninput=()=>renderLogs(window._logsCache||[]);
-
+document.getElementById('log-search').oninput=renderLogs;
 document.getElementById('btn-export').onclick=()=>{
-  const list=window._logsCache||[];
   const q=document.getElementById('log-search').value.trim().toLowerCase();
-  const filtered=list.filter(r=>!q||String(r.model||'').toLowerCase().includes(q));
-  const csv=Papa.unparse(filtered);
-  const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a');
-  a.href=url;a.download='logs.csv';a.click();URL.revokeObjectURL(url);
+  const filtered=(window._logs||[]).filter(r=>!q||String(r.model||'').toLowerCase().includes(q));
+  const csv=Papa.unparse(filtered);const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='logs.csv';a.click();
+};
+
+// ==== 入库 ====
+document.getElementById('btn-inbound').onclick=async()=>{
+  const b={model:in_model.value,storage:in_storage.value,quantity:Number(in_qty.value),operator:in_operator.value,comments:in_comments.value,unit:'PCS'};
+  const s=document.getElementById('in-status');s.textContent='处理中...';
+  try{const r=await apiPost('/inbound',b);s.textContent='入库成功';loadOverview();loadLogs();}
+  catch(e){s.textContent='失败：'+e.message;}
+};
+
+// ==== 出库 ====
+document.getElementById('btn-outbound').onclick=async()=>{
+  const b={model:out_model.value,storage:out_storage.value,quantity:Number(out_qty.value),operator:out_operator.value,comments:out_comments.value,unit:'PCS'};
+  const s=document.getElementById('out-status');s.textContent='处理中...';
+  try{const r=await apiPost('/outbound',b);s.textContent='出库成功';loadOverview();loadLogs();}
+  catch(e){s.textContent='失败：'+e.message;}
+};
+
+// ==== 移库 ====
+document.getElementById('btn-transfer').onclick=async()=>{
+  const b={model:tr_model.value,from_storage:tr_from.value,to_storage:tr_to.value,quantity:Number(tr_qty.value),operator:tr_operator.value,comments:tr_comments.value,unit:'PCS'};
+  const s=document.getElementById('tr-status');s.textContent='处理中...';
+  try{const r=await apiPost('/transfer',b);s.textContent='移库成功';loadOverview();loadLogs();}
+  catch(e){s.textContent='失败：'+e.message;}
 };
 </script>
 </body>
