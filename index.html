@@ -2195,6 +2195,8 @@ async function reloadLogs(){
   } catch(err){
     console.error("日志加载失败：", err);
     showNotification("日志加载失败：" + err.message, "error");
+    } finally {
+    // ⬅⬅⬅ 关键点：必须在 finally 恢复按钮
   }
 
   if(btn){
