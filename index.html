@@ -1,207 +1,2313 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>SCIVIC ECIM Inventory (Azure V7.1)</title>
-<script src="https://cdn.tailwindcss.com"></script>
-<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
-<style>
-body{font-family:Inter,"Microsoft YaHei",sans-serif;background:#f5f6fa;}
-.btn{padding:8px 16px;border-radius:6px;font-weight:600;}
-.btn-blue{background:#2563eb;color:white;}
-.btn-blue:hover{background:#1e40af;}
-input,select{border:1px solid #ccc;border-radius:6px;padding:6px 10px;width:100%;}
-.card{background:white;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,0.1);padding:16px;margin-bottom:16px;}
-</style>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>SCIVIC ECIM</title>
+
+  <!-- Tailwind -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- PapaParse for CSV -->
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+
+  <!-- Supabase SDK -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+
+  <style>
+    body { font-family: Inter, "Microsoft YaHei", sans-serif; }
+    .tab-button.active {
+      border-color:#3b82f6;
+      color:#3b82f6;
+      background:#eff6ff;
+    }
+    .notification {
+      position:fixed;
+      top:35%;
+      left:50%;
+      padding:12px 16px;
+      border-radius:10px;
+      color:#fff;
+      opacity:0;
+      transform:translate(-50%,-12px);
+      transition:.25s;
+      z-index:1000;
+      max-width:90vw;
+      text-align:center;
+      box-shadow:0 10px 20px rgba(0,0,0,.15)
+    }
+    .notification.show { opacity:1; transform:translate(-50%,0); }
+    .notification.success { background:#22c55e; }
+    .notification.error { background:#ef4444; }
+
+    .table-container { max-height:60vh; overflow:auto; }
+
+    .icon-btn {
+      border:1px solid #e5e7eb;
+      border-radius:8px;
+      padding:6px 10px;
+    }
+    .disabled { opacity:.5; pointer-events:none; }
+
+    /* 表格优化 */
+    th { white-space: nowrap !important; }
+    th#th-model,
+    th#logs-th-model {
+      min-width:90px;
+      max-width:110px;
+    }
+
+    table { table-layout:auto !important; width:100%; }
+    table th,
+    table td {
+      text-align:left;
+      padding:8px 10px;
+      word-break:keep-all;
+      white-space:nowrap;
+    }
+
+    th#th-stock,
+    th#logs-th-qty,
+    th#th-storage,
+    th#logs-th-storage { min-width:100px; }
+
+    /* 紧缩“型号”列（预览 & 日志） */
+    th#th-model,
+    th#logs-th-model {
+      min-width:20px;
+      max-width:50px;
+    }
+
+    table th:not(#th-model):not(#logs-th-model),
+    table td {
+      white-space:nowrap;
+      word-break:keep-all;
+    }
+  </style>
 </head>
-<body class="p-4">
-<h1 class="text-2xl font-bold mb-4 text-center text-blue-800">SCIVIC ECIM 库存管理系统 (Azure V7.1)</h1>
 
-<!-- 登录 -->
-<div id="login-panel" class="card max-w-md mx-auto">
-  <h2 class="text-lg font-semibold mb-2">登录 Login</h2>
-  <label>邮箱 Email</label>
-  <input id="login-email" type="email" placeholder="example@domain.com" class="mb-2"/>
-  <button id="btn-send-otp" class="btn btn-blue w-full mb-2">发送验证码 / Send OTP</button>
-  <label>验证码 OTP</label>
-  <input id="login-otp" type="text" placeholder="6位数字" class="mb-2"/>
-  <button id="btn-login" class="btn btn-blue w-full">登录 / Login</button>
-  <p id="login-status" class="text-center text-sm text-gray-600 mt-2"></p>
-</div>
+<body class="bg-gray-100 text-gray-900">
 
-<!-- 主面板 -->
-<div id="main-panel" class="hidden">
-  <div class="flex justify-between items-center mb-4">
-    <div>
-      <button id="lang-cn" class="btn btn-blue mr-2">中文</button>
-      <button id="lang-en" class="btn btn-blue">English</button>
+<!-- 全局弹出提示 -->
+<div id="notification" class="notification"></div>
+
+<div class="container mx-auto p-4 md:p-8">
+  <!-- 顶部标题 -->
+  <header class="text-center mb-4">
+    <h1 class="text-3xl md:text-4xl font-bold" id="app-title">SCIVIC ECIM - 库存管理系统</h1>
+    <p class="text-gray-500" id="app-subtitle">Inventory Management System</p>
+  </header>
+
+  <!-- 登录卡片 -->
+  <div id="login-card" class="max-w-xl mx-auto bg-white rounded-lg shadow p-6 mb-6">
+    <h3 class="text-lg font-semibold mb-2" id="login-title">登录 (Email + 验证码)</h3>
+    <p class="text-sm text-gray-500 mb-4" id="login-desc">
+      输入邮箱获取验证码，验证成功后登录。仅白名单邮箱可进行入/出库、批量导入与移库等写操作。
+    </p>
+    <div class="grid md:grid-cols-2 gap-3">
+      <div class="md:col-span-2">
+        <label class="text-sm" id="label-email">邮箱 (Email)</label>
+        <input id="login-email" class="w-full p-2 border rounded" placeholder="your.name@example.com"/>
+      </div>
+      <div>
+        <label class="text-sm" id="label-otp">验证码 (OTP)</label>
+        <input id="login-otp" class="w-full p-2 border rounded" placeholder="6位数字"/>
+      </div>
+      <div class="flex items-end gap-2">
+        <button id="btn-send-otp"
+                class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded w-full md:w-auto"
+                onclick="sendOtp()">发送验证码</button>
+        <span id="otp-countdown" class="text-sm text-gray-400"></span>
+      </div>
+      <div class="md:col-span-2">
+        <button id="btn-verify"
+                class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded w-full"
+                onclick="verifyOtp()">验证并登录</button>
+      </div>
     </div>
-    <div><button id="btn-logout" class="btn btn-blue">登出 / Logout</button></div>
   </div>
 
-  <!-- 库存总览 -->
-  <div id="overview" class="card">
-    <h2 class="text-xl font-semibold mb-2">库存总览 / Overview</h2>
-    <table class="w-full text-sm" id="tbl-overview">
-      <thead><tr><th>型号</th><th>库位</th><th>数量</th><th>单位</th><th>更新时间</th></tr></thead>
-      <tbody></tbody>
-    </table>
-  </div>
-
-  <!-- 入库 -->
-  <div id="inbound" class="card">
-    <h2 class="text-xl font-semibold mb-2">入库 / Inbound</h2>
-    <div class="grid md:grid-cols-3 gap-2">
-      <input id="in-model" placeholder="型号 Model"/>
-      <input id="in-storage" placeholder="库位 Storage"/>
-      <input id="in-qty" type="number" placeholder="数量 Quantity"/>
-      <input id="in-operator" placeholder="操作人 Operator"/>
-      <input id="in-comments" placeholder="备注 Comments"/>
-      <button id="btn-inbound" class="btn btn-blue col-span-3">提交入库 / Submit</button>
+  <!-- 非白名单提示 -->
+  <div id="unauth-card"
+       class="max-w-xl mx-auto bg-amber-50 border border-amber-200 text-amber-800 rounded-lg p-5 mb-6 hidden">
+    <div class="font-semibold mb-1" id="unauth-title">未授权用户无法进行写操作</div>
+    <div class="text-sm" id="unauth-desc">
+      当前邮箱未在白名单中。你仍可浏览“库存总览/操作日志”，但入/出库、批量导入、移库操作已被禁用。
     </div>
-    <p id="in-status" class="text-sm text-gray-600 mt-2"></p>
   </div>
 
-  <!-- 出库 -->
-  <div id="outbound" class="card">
-    <h2 class="text-xl font-semibold mb-2">出库 / Outbound</h2>
-    <div class="grid md:grid-cols-3 gap-2">
-      <input id="out-model" placeholder="型号 Model"/>
-      <input id="out-storage" placeholder="库位 Storage"/>
-      <input id="out-qty" type="number" placeholder="数量 Quantity"/>
-      <input id="out-operator" placeholder="操作人 Operator"/>
-      <input id="out-comments" placeholder="备注 Comments"/>
-      <button id="btn-outbound" class="btn btn-blue col-span-3">提交出库 / Submit</button>
-    </div>
-    <p id="out-status" class="text-sm text-gray-600 mt-2"></p>
+  <!-- 当前登录邮箱 -->
+  <div class="text-center mb-6">
+    <span class="text-sm text-gray-500" id="current-user-label">当前操作用户: </span>
+    <span id="current-user" class="font-semibold">未登录</span>
+    <button class="ml-2 text-sm text-blue-600 underline" id="btn-logout" onclick="logout()">退出登录</button>
   </div>
 
-  <!-- 移库 -->
-  <div id="transfer" class="card">
-    <h2 class="text-xl font-semibold mb-2">移库 / Transfer</h2>
-    <div class="grid md:grid-cols-3 gap-2">
-      <input id="tr-model" placeholder="型号 Model"/>
-      <input id="tr-from" placeholder="来源库位 From Storage"/>
-      <input id="tr-to" placeholder="目标库位 To Storage"/>
-      <input id="tr-qty" type="number" placeholder="数量 Quantity"/>
-      <input id="tr-operator" placeholder="操作人 Operator"/>
-      <input id="tr-comments" placeholder="备注 Comments"/>
-      <button id="btn-transfer" class="btn btn-blue col-span-3">提交移库 / Submit</button>
-    </div>
-    <p id="tr-status" class="text-sm text-gray-600 mt-2"></p>
+  <!-- 顶部标签页 -->
+  <div class="mb-8 flex justify-center gap-2 border-b overflow-x-auto">
+    <button id="inbound-tab"   class="tab-button active px-6 py-3 border-b-2 whitespace-nowrap" onclick="switchView('inbound')">入库管理</button>
+    <button id="outbound-tab"  class="tab-button px-6 py-3 border-b-2 whitespace-nowrap" onclick="switchView('outbound')">出库管理</button>
+    <button id="return-tab"    class="tab-button px-6 py-3 border-b-2 whitespace-nowrap" onclick="switchView('return')">退库管理</button>
+    <button id="transfer-tab"  class="tab-button px-6 py-3 border-b-2 whitespace-nowrap" onclick="switchView('transfer')">移库管理</button>
+    <button id="overview-tab"  class="tab-button px-6 py-3 border-b-2 whitespace-nowrap" onclick="switchView('overview')">库存总览</button>
+    <button id="logs-tab"      class="tab-button px-6 py-3 border-b-2 whitespace-nowrap" onclick="switchView('logs')">操作日志 Logs</button>
   </div>
 
-  <!-- 操作日志 -->
-  <div id="logs" class="card">
-    <h2 class="text-xl font-semibold mb-2">操作日志 / Logs</h2>
-    <input id="log-search" placeholder="输入型号 / 搜索" class="mb-2"/>
-    <button id="btn-export" class="btn btn-blue mb-2">导出当前结果 / Export CSV</button>
-    <table class="w-full text-sm" id="tbl-logs">
-      <thead><tr><th>类型</th><th>时间</th><th>型号</th><th>数量</th><th>库位</th><th>操作人</th><th>备注</th></tr></thead>
-      <tbody></tbody>
-    </table>
-  </div>
+  <main id="app-main">
+
+    <!-- 入库管理 -->
+    <section id="inbound-view">
+      <div class="bg-white p-6 rounded-lg shadow mb-6">
+        <div class="flex items-center justify-between gap-3">
+          <div class="flex-1">
+            <h2 class="text-xl font-bold mb-2" id="inbound-title">入库管理 (Inbound)</h2>
+            <input id="inbound-search" class="w-full p-3 border rounded-lg"
+                   placeholder="输入 型号(Model) 或 名称(Name) 搜索..."/>
+          </div>
+          <button id="btn-inbound-showall" class="icon-btn w-full md:w-auto"
+                  onclick="showAllFor('inbound')">👁️ 显示全部</button>
+        </div>
+      </div>
+
+      <div id="inbound-result" class="space-y-4"></div>
+
+      <!-- 批量导入（入库） -->
+      <div class="bg-white p-6 rounded-lg shadow mt-8">
+        <h3 class="text-lg font-semibold mb-3" id="batch-import-title">批量导入 CSV (Batch Import)</h3>
+        <div class="flex items-center gap-3 flex-wrap">
+          <button id="btn-batch-import"
+                  onclick="document.getElementById('batch-upload').click()"
+                  class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg w-full md:w-auto">
+            选择 CSV 文件并导入
+          </button>
+          <input id="batch-upload" type="file" accept=".csv" class="hidden" onchange="handleBatchUpload(event)"/>
+          <span class="text-sm text-gray-500" id="batch-import-hint">
+            表头：型号, 部件名称, 单位, 数量, 存放地点, 使用位置, 材质, 说明
+          </span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 出库管理 -->
+    <section id="outbound-view" class="hidden">
+      <div class="bg-white p-6 rounded-lg shadow mb-6">
+        <div class="flex items-center justify-between gap-3">
+          <div class="flex-1">
+            <h2 class="text-xl font-bold mb-2" id="outbound-title">出库管理 (Outbound)</h2>
+            <input id="outbound-search" class="w-full p-3 border rounded-lg"
+                   placeholder="输入 型号(Model) 或 名称(Name) 搜索..."/>
+          </div>
+          <button id="btn-outbound-showall" class="icon-btn w-full md:w-auto"
+                  onclick="showAllFor('outbound')">👁️ 显示全部</button>
+        </div>
+      </div>
+      <div id="outbound-result" class="space-y-4"></div>
+    </section>
+
+    <!--退库管理 -->
+    <section id="return-view" class="hidden">
+      <div class="bg-white p-6 rounded-lg shadow mb-6">
+        <div class="flex items-center justify-between gap-3">
+          <div class="flex-1">
+            <h2 class="text-xl font-bold mb-2" id="return-title">退库管理 (Return)</h2>
+            <input id="return-search" class="w-full p-3 border rounded-lg"
+                   placeholder="输入 型号/名称/领用人 搜索出库记录..."/>
+          </div>
+          <!-- 如果想做“最近出库记录”按钮，可以后面再加 -->
+        </div>
+      </div>
+
+      <!-- 退库搜索结果区域 -->
+      <div id="return-result" class="space-y-4"></div>
+    </section>
+   
+    <!-- 移库管理 -->
+    <section id="transfer-view" class="hidden">
+      <div class="bg-white p-6 rounded-lg shadow mb-6">
+        <div class="flex items-center justify-between gap-3">
+          <div class="flex-1">
+            <h2 class="text-xl font-bold mb-2" id="transfer-title">移库管理 (Transfer)</h2>
+            <input id="transfer-search" class="w-full p-3 border rounded-lg"
+                   placeholder="输入 型号(Model) 或 名称(Name) 搜索..."/>
+          </div>
+          <button id="btn-transfer-showall" class="icon-btn w-full md:w-auto"
+                  onclick="showAllFor('transfer')">👁️ 显示全部</button>
+        </div>
+      </div>
+
+      <div id="transfer-result" class="space-y-4"></div>
+
+      <!-- 批量移库 -->
+      <div class="bg-white p-6 rounded-lg shadow mt-8">
+        <h3 class="text-lg font-semibold mb-3" id="batch-transfer-title">批量移库 CSV (Batch Transfer)</h3>
+        <div class="flex items-center gap-3 flex-wrap">
+          <button id="btn-batch-transfer"
+                  onclick="document.getElementById('batch-transfer').click()"
+                  class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg w-full md:w-auto">
+            选择 CSV 文件并导入
+          </button>
+          <input id="batch-transfer" type="file" accept=".csv" class="hidden" onchange="handleBatchTransfer(event)"/>
+          <span class="text-sm text-gray-500" id="batch-transfer-hint">
+            表头：型号, 名称, 单位, 数量, 原存放地点, 新存放地点, 使用位置, 材质, 备注
+          </span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 库存总览 -->
+    <section id="overview-view" class="hidden">
+      <div class="bg-white p-6 rounded-lg shadow">
+        <div class="flex items-center justify-between gap-3">
+          <div class="flex-1">
+            <h2 class="text-2xl font-bold mb-2" id="overview-title">库存总览 (Inventory Overview)</h2>
+            <input id="overview-search" class="w-full p-3 mb-4 border rounded-lg"
+                   placeholder="输入 型号 或 名称 搜索..."/>
+          </div>
+          <div class="flex gap-2">
+            <button id="btn-export-overview" class="icon-btn w-full md:w-auto" onclick="exportOverviewCSV()">⬇️ 导出 CSV</button>
+            <button id="btn-refresh" class="icon-btn w-full md:w-auto" onclick="reloadOverview()">🔄 刷新</button>
+          </div>
+        </div>
+
+        <div class="table-container border rounded-lg overflow-x-auto">
+          <table class="min-w-full divide-y divide-gray-200">
+            <thead class="bg-gray-50 sticky top-0">
+              <tr>
+                <th class="px-6 py-3 text-left" id="th-model">型号</th>
+                <th class="px-6 py-3 text-left" id="th-name">名称</th>
+                <th class="px-6 py-3 text-left" id="th-unit">单位</th>
+                <th class="px-6 py-3 text-left" id="th-stock">库存</th>
+                <th class="px-6 py-3 text-left" id="th-storage">存放地点</th>
+                <th class="px-6 py-3 text-left" id="th-location">使用位置</th>
+                <th class="px-6 py-3 text-left" id="th-material">材质</th>
+                <th class="px-6 py-3 text-left" id="th-comments">备注</th>
+              </tr>
+            </thead>
+            <tbody id="inventory-table-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- 操作日志 -->
+    <section id="logs-view" class="hidden">
+      <div class="bg-white p-6 rounded-lg shadow mb-3">
+        <div class="flex flex-col md:flex-row md:items-end gap-3">
+          <div class="flex-1">
+            <h2 class="text-2xl font-bold mb-2" id="logs-title">操作日志 (Logs)</h2>
+            <input id="logs-search" class="w-full p-3 border rounded-lg"
+                   placeholder="搜索：型号/名称/库位/领取人/操作者/备注"/>
+          </div>
+
+          <div>
+            <label class="text-sm block mb-1" id="logs-type-label">类型 (Type)</label>
+            <select id="logs-type" class="p-2 border rounded w-48">
+              <option value="ALL" id="logs-opt-all">全部 All</option>
+              <option value="INBOUND" id="logs-opt-in">入库 Inbound</option>
+              <option value="OUTBOUND" id="logs-opt-out">出库 Outbound</option>
+              <option value="TRANSFER" id="logs-opt-tr">移库 Transfer</option>
+              <option value="RETURN"   id="logs-opt-ret">退库 Return</option>
+            </select>
+          </div>
+
+          <div class="flex items-end gap-2">
+            <div>
+              <label class="text-sm block mb-1" id="logs-date-start-label">开始日期 (Start)</label>
+              <input type="date" id="logs-date-start" class="p-2 border rounded w-36">
+            </div>
+            <div>
+              <label class="text-sm block mb-1" id="logs-date-end-label">结束日期 (End)</label>
+              <input type="date" id="logs-date-end" class="p-2 border rounded w-36">
+            </div>
+            <button id="btn-logs-datefilter" class="icon-btn" onclick="applyLogsFilter()">🕒 筛选</button>
+          </div>
+
+          <div class="flex gap-2">
+            <button id="btn-logs-export" class="icon-btn" onclick="exportLogsCSV()">⬇️ 导出 CSV</button>
+            <button id="btn-logs-refresh" class="icon-btn" onclick="reloadLogs()">🔄 刷新</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-white p-2 rounded-lg shadow">
+        <div class="table-container border rounded-lg overflow-x-auto">
+          <table class="min-w-full divide-y divide-gray-200">
+            <thead class="bg-gray-50 sticky top-0">
+              <tr>
+                <th class="px-4 py-3 text-left" id="logs-th-time">时间</th>
+                <th class="px-4 py-3 text-left" id="logs-th-type">类型</th>
+                <th class="px-4 py-3 text-left" id="logs-th-model">型号</th>
+                <th class="px-4 py-3 text-left" id="logs-th-name">名称</th>
+                <th class="px-4 py-3 text-left" id="logs-th-unit">单位</th>
+                <th class="px-4 py-3 text-left" id="logs-th-qty">数量</th>
+                <th class="px-4 py-3 text-left" id="logs-th-storage">库位</th>
+                <th class="px-4 py-3 text-left" id="logs-th-from">From</th>
+                <th class="px-4 py-3 text-left" id="logs-th-to">To</th>
+                <th class="px-4 py-3 text-left" id="logs-th-recipient">领取人</th>
+                <th class="px-4 py-3 text-left" id="logs-th-operator">操作者</th>
+                <th class="px-4 py-3 text-left" id="logs-th-comments">备注</th>
+              </tr>
+            </thead>
+            <tbody id="logs-table-body"></tbody>
+          </table>
+        </div>
+        <div id="logs-empty" class="text-center text-gray-500 py-6 hidden">暂无日志</div>
+      </div>
+    </section>
+
+  </main>
 </div>
 
 <script>
-const API_BASE = "https://meston-inventory-api-dsf5btcbb2dpajc2.centralus-01.azurewebsites.net/api";
-let AUTH_EMAIL=null;
+/* ========= ① Supabase 初始化 ========= */
+const SUPA_URL = "https://lnfcshqbohiuwcmbeftj.supabase.co";
+const SUPA_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxuZmNzaHFib2hpdXdjbWJlZnRqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjA3OTczNTAsImV4cCI6MjA3NjM3MzM1MH0.ItSsnRjYm3TxgC6AuDFqamOPtj74EXMNYnefc-Xe4bM";
 
-async function apiPost(url,body){
-  const res=await fetch(API_BASE+url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  return await res.json();
+const supa = window.supabase.createClient(
+  SUPA_URL,
+  SUPA_KEY,
+  {
+    auth:{
+      persistSession:true,
+      autoRefreshToken:true,
+      detectSessionInUrl:true
+    }
+  }
+);
+
+/* ========= ② I18N 语言包 & 语言切换 ========= */
+let LANG = (localStorage.getItem("scivic_lang")||"zh");
+
+const I18N = {
+  zh: {
+    app_title:"SCIVIC ECIM - 库存管理系统",
+    app_subtitle:"Inventory Management System",
+    current_user_label:"当前操作用户",
+    logout:"退出登录",
+    login_title:"登录 (Email + 验证码)",
+    login_desc:"输入邮箱获取验证码，验证成功后登录。仅白名单邮箱可进行入/出库、批量导入与移库等写操作。",
+    label_email:"邮箱 (Email)",
+    label_otp:"验证码 (OTP)",
+    send_otp:"发送验证码",
+    verify_login:"验证并登录",
+    unauthorized_title:"未授权用户无法进行写操作",
+    unauthorized_desc:"当前邮箱未在白名单中。你仍可浏览“库存总览/操作日志”，但入/出库、批量导入、移库操作已被禁用。",
+    tab_inbound:"入库管理",
+    tab_outbound:"出库管理",
+    tab_transfer:"移库管理",
+    tab_overview:"库存总览",
+    tab_logs:"操作日志 Logs",
+    tab_return:"退库管理",
+    inbound_title:"入库管理 (Inbound)",
+    outbound_title:"出库管理 (Outbound)",
+    transfer_title:"移库管理 (Transfer)",
+    overview_title:"库存总览 (Inventory Overview)",
+    return_title:"退库管理 (Return)",
+    show_all:"显示全部",
+    batch_import_title:"批量导入 CSV (Batch Import)",
+    batch_import_hint:"表头：型号, 部件名称, 单位, 数量, 存放地点, 使用位置, 材质, 说明",
+    batch_transfer_title:"批量移库 CSV (Batch Transfer)",
+    batch_transfer_hint:"表头：型号, 名称, 单位, 数量, 原存放地点, 新存放地点, 使用位置, 材质, 备注",
+    overview_search_placeholder:"输入 型号 或 名称 搜索...",
+    export_csv:"导出 CSV",
+    refresh:"刷新",
+    th_model:"型号",
+    th_name:"名称",
+    th_unit:"单位",
+    th_stock:"库存",
+    th_storage:"存放地点",
+    th_location:"使用位置",
+    th_material:"材质",
+    th_comments:"备注",
+    logs_title:"操作日志 (Logs)",
+    logs_search_ph:"搜索：型号/名称/库位/领取人/操作者/备注",
+    logs_type_label:"类型 (Type)",
+    logs_opt_all:"全部 All",
+    logs_opt_in:"入库 Inbound",
+    logs_opt_out:"出库 Outbound",
+    logs_opt_tr:"移库 Transfer",
+    logs_opt_ret:"退库 Return",
+    logs_export:"导出 CSV",
+    logs_refresh:"刷新",
+    logs_empty:"暂无日志",
+    logs_th_time:"时间",
+    logs_th_type:"类型",
+    logs_th_model:"型号",
+    logs_th_name:"名称",
+    logs_th_unit:"单位",
+    logs_th_qty:"数量",
+    logs_th_storage:"库位",
+    logs_th_from:"From",
+    logs_th_to:"To",
+    logs_th_recipient:"领取人",
+    logs_th_operator:"操作者",
+    logs_th_comments:"备注",
+    logs_date_start:"开始日期 (Start)",
+    logs_date_end:"结束日期 (End)",
+    logs_filter_btn:"筛选",
+    tip_need_email:"请输入邮箱",
+    tip_need_email_code:"请输入邮箱与验证码",
+    tip_otp_sent:"验证码已发送",
+    tip_otp_retry:"请勿频繁发送，10秒后可重试",
+    tip_need_login:"请先登录",
+    tip_not_authorized:"未授权用户无法进行该操作",
+    tip_invalid_qty:"请输入有效入库数量",
+    tip_need_recipient:"请输入领用人",
+    tip_stock_not_enough:"库存不足，当前库存 {stock}",
+    tip_new_storage:"请输入新存放地点",
+    done_export_overview:"已导出 {n} 条",
+    done_export_logs:"已导出 {n} 条日志",
+    no_match_or_0:"未找到相关物料（或库存为 0）",
+    not_repeat_click:"请勿重复点击，5秒后可重试",
+    inbound_here:"入库到此地点",
+    outbound_confirm:"确认出库",
+    transfer_confirm:"执行移库",
+    return_search_ph:"输入 型号/名称/领用人 搜索出库记录...",
+    return_confirm:"确认退库"
+  },
+  en: {
+    app_title:"SCIVIC ECIM - Inventory Management System",
+    app_subtitle:"Inventory Management System",
+    current_user_label:"Current user",
+    logout:"Log out",
+    login_title:"Sign in (Email + OTP)",
+    login_desc:"Enter your email to receive a code. Only whitelisted emails can perform inbound/outbound, batch import and transfer.",
+    label_email:"Email",
+    label_otp:"OTP",
+    send_otp:"Send Code",
+    verify_login:"Verify & Sign In",
+    unauthorized_title:"Unauthorized users cannot write",
+    unauthorized_desc:"Your email is not whitelisted. You can still browse Overview/Logs; inbound/outbound/transfer are disabled.",
+    tab_inbound:"Inbound",
+    tab_outbound:"Outbound",
+    tab_transfer:"Transfer",
+    tab_overview:"Overview",
+    tab_logs:"Logs",
+    tab_return:"Return",
+    inbound_title:"Inbound",
+    outbound_title:"Outbound",
+    transfer_title:"Transfer",
+    overview_title:"Inventory Overview",
+    return_title:"Return",
+    show_all:"Show all",
+    batch_import_title:"Batch Import CSV",
+    batch_import_hint:"Headers: Model, Name, Unit, Quantity, Storage, Location, Material, Comments",
+    batch_transfer_title:"Batch Transfer CSV",
+    batch_transfer_hint:"Headers: Model, Name, Unit, Quantity, From Storage, To Storage, Location, Material, Comments",
+    overview_search_placeholder:"Search by Model or Name...",
+    export_csv:"Export CSV",
+    refresh:"Refresh",
+    th_model:"Model",
+    th_name:"Name",
+    th_unit:"Unit",
+    th_stock:"Stock",
+    th_storage:"Storage",
+    th_location:"Location",
+    th_material:"Material",
+    th_comments:"Comments",
+    logs_title:"Logs",
+    logs_search_ph:"Search: model/name/storage/recipient/operator/comments",
+    logs_type_label:"Type",
+    logs_opt_all:"All",
+    logs_opt_in:"Inbound",
+    logs_opt_out:"Outbound",
+    logs_opt_tr:"Transfer",
+    logs_opt_ret:"Return",
+    logs_export:"Export CSV",
+    logs_refresh:"Refresh",
+    logs_empty:"No records",
+    logs_th_time:"Time",
+    logs_th_type:"Type",
+    logs_th_model:"Model",
+    logs_th_name:"Name",
+    logs_th_unit:"Unit",
+    logs_th_qty:"Qty",
+    logs_th_storage:"Storage",
+    logs_th_from:"From",
+    logs_th_to:"To",
+    logs_th_recipient:"Recipient",
+    logs_th_operator:"Operator",
+    logs_th_comments:"Comments",
+    logs_date_start:"Start date",
+    logs_date_end:"End date",
+    logs_filter_btn:"Filter",
+    tip_need_email:"Please enter your email",
+    tip_need_email_code:"Enter email and OTP",
+    tip_otp_sent:"Code sent",
+    tip_otp_retry:"Retry in 10s",
+    tip_need_login:"Please sign in first",
+    tip_not_authorized:"Not authorized",
+    tip_invalid_qty:"Enter a valid quantity",
+    tip_need_recipient:"Enter recipient",
+    tip_stock_not_enough:"Not enough stock, current {stock}",
+    tip_new_storage:"Enter new storage",
+    done_export_overview:"Exported {n} rows",
+    done_export_logs:"Exported {n} log rows",
+    no_match_or_0:"No match (or stock = 0)",
+    not_repeat_click:"Retry in 5s",
+    inbound_here:"Inbound Here",
+    outbound_confirm:"Confirm Outbound",
+    transfer_confirm:"Confirm Transfer",
+    return_search_ph:"Search outbound logs by model / name / recipient...",
+    return_confirm:"Confirm Return"
+  }
+};
+
+function T(key, vars={}){
+  const dict=I18N[LANG]||I18N.zh;
+  let s=dict[key]||I18N.zh[key]||key;
+  Object.keys(vars).forEach(k=>{
+    s=s.replace(new RegExp("\\{"+k+"\\}","g"), String(vars[k]));
+  });
+  return s;
 }
 
-// ==== 登录 ====
-document.getElementById('btn-send-otp').onclick=async()=>{
-  const email=document.getElementById('login-email').value.trim();
-  const status=document.getElementById('login-status');
-  if(!email){status.textContent='请输入邮箱';return;}
-  status.textContent='发送中...';
+function setLang(lang){
+  LANG=(lang==="en")?"en":"zh";
+  localStorage.setItem("scivic_lang",LANG);
+  applyI18n();
+}
+
+function injectLangToggle(){
+  const div=document.createElement("div");
+  div.style.position="fixed";
+  div.style.right="16px";
+  div.style.top="16px";
+  div.style.zIndex="1001";
+  div.innerHTML=`
+    <div class="bg-white/90 backdrop-blur rounded-full shadow px-2 py-1 border">
+      <button id="lang-zh" class="px-2 ${LANG==='zh'?'font-bold':''}">中文</button>
+      <span class="text-gray-300">|</span>
+      <button id="lang-en" class="px-2 ${LANG==='en'?'font-bold':''}">EN</button>
+    </div>`;
+  document.body.appendChild(div);
+  document.getElementById("lang-zh").onclick=()=>setLang("zh");
+  document.getElementById("lang-en").onclick=()=>setLang("en");
+}
+
+function applyI18n(){
+  byId("app-title").textContent=T("app_title");
+  byId("app-subtitle").textContent=T("app_subtitle");
+
+  byId("login-title").textContent=T("login_title");
+  byId("login-desc").textContent=T("login_desc");
+  byId("label-email").textContent=T("label_email");
+  byId("label-otp").textContent=T("label_otp");
+  byId("btn-send-otp").textContent=T("send_otp");
+  byId("btn-verify").textContent=T("verify_login");
+  byId("current-user-label").textContent=T("current_user_label")+": ";
+  byId("btn-logout").textContent=T("logout");
+  byId("unauth-title").textContent=T("unauthorized_title");
+  byId("unauth-desc").textContent=T("unauthorized_desc");
+
+  byId("inbound-tab").textContent=T("tab_inbound");
+  byId("outbound-tab").textContent=T("tab_outbound");
+  byId("transfer-tab").textContent=T("tab_transfer");
+  byId("overview-tab").textContent=T("tab_overview");
+  byId("logs-tab").textContent=T("tab_logs");
+  byId("return-tab").textContent=T("tab_return");
+
+  byId("inbound-title").textContent=T("inbound_title");
+  byId("outbound-title").textContent=T("outbound_title");
+  byId("transfer-title").textContent=T("transfer_title");
+  byId("overview-title").textContent=T("overview_title");
+  byId("return-title").textContent=T("return_title");
+
+  byId("btn-inbound-showall").textContent="👁️ "+T("show_all");
+  byId("btn-outbound-showall").textContent="👁️ "+T("show_all");
+  byId("btn-transfer-showall").textContent="👁️ "+T("show_all");
+
+  byId("batch-import-title").textContent=T("batch_import_title");
+  byId("batch-import-hint").textContent=T("batch_import_hint");
+  byId("batch-transfer-title").textContent=T("batch_transfer_title");
+  byId("batch-transfer-hint").textContent=T("batch_transfer_hint");
+
+  byId("overview-search").placeholder=T("overview_search_placeholder");
+  byId("return-search").placeholder=T("return_search_ph");
+  byId("th-model").textContent=T("th_model");
+  byId("th-name").textContent=T("th_name");
+  byId("th-unit").textContent=T("th_unit");
+  byId("th-stock").textContent=T("th_stock");
+  byId("th-storage").textContent=T("th_storage");
+  byId("th-location").textContent=T("th_location");
+  byId("th-material").textContent=T("th_material");
+  byId("th-comments").textContent=T("th_comments");
+
+  byId("btn-export-overview").textContent="⬇️ "+T("export_csv");
+  byId("btn-refresh").textContent="🔄 "+T("refresh");
+
+  byId("logs-title").textContent=T("logs_title");
+  byId("logs-search").placeholder=T("logs_search_ph");
+  byId("logs-type-label").textContent=T("logs_type_label");
+  byId("logs-opt-all").textContent=T("logs_opt_all");
+  byId("logs-opt-in").textContent=T("logs_opt_in");
+  byId("logs-opt-out").textContent=T("logs_opt_out");
+  byId("logs-opt-tr").textContent=T("logs_opt_tr");
+  byId("logs-opt-ret").textContent = T("logs_opt_ret");
+  byId("btn-logs-export").textContent="⬇️ "+T("logs_export");
+  byId("btn-logs-refresh").textContent="🔄 "+T("logs_refresh");
+
+  byId("logs-th-time").textContent=T("logs_th_time");
+  byId("logs-th-type").textContent=T("logs_th_type");
+  byId("logs-th-model").textContent=T("logs_th_model");
+  byId("logs-th-name").textContent=T("logs_th_name");
+  byId("logs-th-unit").textContent=T("logs_th_unit");
+  byId("logs-th-qty").textContent=T("logs_th_qty");
+  byId("logs-th-storage").textContent=T("logs_th_storage");
+  byId("logs-th-from").textContent=T("logs_th_from");
+  byId("logs-th-to").textContent=T("logs_th_to");
+  byId("logs-th-recipient").textContent=T("logs_th_recipient");
+  byId("logs-th-operator").textContent=T("logs_th_operator");
+  byId("logs-th-comments").textContent=T("logs_th_comments");
+
+  byId("logs-empty").textContent=T("logs_empty");
+  byId("logs-date-start-label").textContent=T("logs_date_start");
+  byId("logs-date-end-label").textContent=T("logs_date_end");
+  byId("btn-logs-datefilter").textContent="🕒 "+T("logs_filter_btn");
+}
+
+document.addEventListener("DOMContentLoaded", injectLangToggle);
+document.addEventListener("DOMContentLoaded", applyI18n);
+
+/* ========= ③ DOM/工具函数 ========= */
+function byId(id){ return document.getElementById(id); }
+
+function formatLocalTime(utcString){
+  if(!utcString) return "";
   try{
-    const res=await apiPost('/send_otp',{email});
-    status.textContent=res.success?'验证码已发送，请查收邮箱':'发送失败：'+(res.error||'');
-  }catch(e){status.textContent='发送失败：'+e.message;}
+    const date=new Date(utcString);
+    const y=date.getFullYear();
+    const m=String(date.getMonth()+1).padStart(2,"0");
+    const d=String(date.getDate()).padStart(2,"0");
+    const hh=String(date.getHours()).padStart(2,"0");
+    const mm=String(date.getMinutes()).padStart(2,"0");
+    const ss=String(date.getSeconds()).padStart(2,"0");
+    return `${y}-${m}-${d} ${hh}:${mm}:${ss}`;
+  }catch(err){
+    console.warn("时间转换失败:",utcString,err);
+    return utcString;
+  }
+}
+
+const showNotification=(msg,type="success")=>{
+  const n=byId("notification");
+  n.textContent=msg;
+  n.className=`notification show ${type}`;
+  setTimeout(()=>n.classList.remove("show"),3000);
 };
 
-document.getElementById('btn-login').onclick=async()=>{
-  const email=document.getElementById('login-email').value.trim();
-  const otp=document.getElementById('login-otp').value.trim();
-  const status=document.getElementById('login-status');
-  if(!email||!otp){status.textContent='请输入邮箱和验证码';return;}
-  try{
-    const r=await fetch(API_BASE+'/dict_check?email='+encodeURIComponent(email));
-    const j=await r.json();
-    if(j.authorized){localStorage.setItem('auth_email',email);AUTH_EMAIL=email;
-      document.getElementById('login-panel').classList.add('hidden');
-      document.getElementById('main-panel').classList.remove('hidden');
-      loadOverview();loadLogs();
-    }else status.textContent='未授权邮箱';
-  }catch(e){status.textContent='登录失败：'+e.message;}
-};
+/* ========= ④ 登录状态 / 白名单 / 会话保持 ========= */
 
-document.getElementById('btn-logout').onclick=()=>{
-  localStorage.removeItem('auth_email');AUTH_EMAIL=null;
-  document.getElementById('main-panel').classList.add('hidden');
-  document.getElementById('login-panel').classList.remove('hidden');
-};
+let CURRENT_EMAIL="";
+let AUTHORIZED=false;
 
-window.addEventListener('load',()=>{
-  const saved=localStorage.getItem('auth_email');
-  if(saved){AUTH_EMAIL=saved;document.getElementById('login-panel').classList.add('hidden');document.getElementById('main-panel').classList.remove('hidden');loadOverview();loadLogs();}
+// 登录有效期：24 小时
+const LOGIN_TTL_MS = 24 * 60 * 60 * 1000;
+
+function setCurrentUser(email){
+  CURRENT_EMAIL=email||"";
+  byId("current-user").textContent=CURRENT_EMAIL||"未登录";
+}
+
+// 保存邮箱 + 过期时间到 localStorage
+function rememberLogin(email){
+  const expiresAt=Date.now()+LOGIN_TTL_MS;
+  localStorage.setItem("scivic_auth_email",email);
+  localStorage.setItem("scivic_auth_expires",String(expiresAt));
+}
+
+// 恢复本地登录态
+async function restoreLoginFromLocal(){
+  const savedEmail=localStorage.getItem("scivic_auth_email")||"";
+  const exp=Number(localStorage.getItem("scivic_auth_expires")||0);
+  if(!savedEmail||!exp) return;
+  if(Date.now()>=exp){
+    localStorage.removeItem("scivic_auth_email");
+    localStorage.removeItem("scivic_auth_expires");
+    return;
+  }
+
+  // 未过期 -> 认为已登录
+  setCurrentUser(savedEmail);
+  byId("login-card").classList.add("hidden");
+
+  // 检查 dict 白名单
+  const { data:wl } = await supa
+    .from("dict")
+    .select("email,enabled")
+    .eq("email", savedEmail)
+    .eq("enabled", true)
+    .limit(1);
+
+  AUTHORIZED=Array.isArray(wl)&&wl.length>0;
+  if(!AUTHORIZED){
+    byId("unauth-card").classList.remove("hidden");
+  }
+}
+
+// OTP 冷却锁
+const __opLocks = new Map();
+function acquireOpLock(action,key,ms=5000){
+  const now=Date.now();
+  const k=`${action}::${key}`;
+  const until=__opLocks.get(k);
+  if(until && until>now) return false;
+  const expireAt=now+ms;
+  __opLocks.set(k,expireAt);
+  setTimeout(()=>{
+    if(__opLocks.get(k)===expireAt) __opLocks.delete(k);
+  },ms+50);
+  return true;
+}
+
+function releaseBtnLater(btn){
+  if(!btn) return;
+  const oldHTML=btn.innerHTML;
+  btn.classList.add("disabled");
+  btn.innerHTML="⏳";
+  setTimeout(()=>{
+    btn.classList.remove("disabled");
+    btn.innerHTML=oldHTML;
+  },5000);
+}
+
+// 发送 OTP
+async function sendOtp(){
+  const email=(byId("login-email").value||"").trim().toLowerCase();
+  if(!email){
+    showNotification(T("tip_need_email"),"error");
+    return;
+  }
+  if(!acquireOpLock('otp',email,10000)){
+    showNotification(T("tip_otp_retry"),"error");
+    return;
+  }
+  byId("btn-send-otp").classList.add("disabled");
+
+  const { error } = await supa.auth.signInWithOtp({
+    email,
+    options:{ shouldCreateUser:false }
+  });
+  if(error){
+    byId("btn-send-otp").classList.remove("disabled");
+    showNotification(error.message||"发送失败","error");
+    return;
+  }
+
+  startCountdown(60);
+  showNotification(T("tip_otp_sent"));
+}
+
+// 倒计时
+let countdownTimer=null;
+function startCountdown(sec){
+  const btn=byId("btn-send-otp");
+  const label=byId("otp-countdown");
+  let left=sec;
+  label.textContent=`${left}s`;
+  clearInterval(countdownTimer);
+  countdownTimer=setInterval(()=>{
+    left--;
+    if(left<=0){
+      clearInterval(countdownTimer);
+      label.textContent="";
+      btn.classList.remove("disabled");
+    }else{
+      label.textContent=`${left}s`;
+    }
+  },1000);
+}
+
+// 验证 OTP
+async function verifyOtp(){
+  const email=(byId("login-email").value||"").trim().toLowerCase();
+  const code =(byId("login-otp").value||"").trim();
+  if(!email||!code){
+    showNotification(T("tip_need_email_code"),"error");
+    return;
+  }
+  const { error } = await supa.auth.verifyOtp({
+    type:"email",
+    email,
+    token:code
+  });
+  if(error){
+    showNotification(error.message||"登录失败","error");
+    return;
+  }
+
+  setCurrentUser(email);
+
+  // 白名单校验
+  const { data:wl } = await supa
+    .from("dict")
+    .select("email,enabled")
+    .eq("email", email)
+    .eq("enabled", true)
+    .limit(1);
+
+  AUTHORIZED=Array.isArray(wl)&&wl.length>0;
+
+  byId("login-card").classList.add("hidden");
+  byId("unauth-card").classList.toggle("hidden", AUTHORIZED);
+
+  // 记住登录 24h
+  rememberLogin(email);
+
+  showNotification(
+    AUTHORIZED
+      ? "登录成功，已授权"
+      : "登录成功，但非白名单",
+    "success"
+  );
+}
+
+// 退出登录
+async function logout(){
+  await supa.auth.signOut();
+  AUTHORIZED=false;
+  setCurrentUser("");
+  byId("login-card").classList.remove("hidden");
+  byId("unauth-card").classList.add("hidden");
+
+  localStorage.removeItem("scivic_auth_email");
+  localStorage.removeItem("scivic_auth_expires");
+
+  showNotification(T("logout"));
+}
+
+// 页面启动时尝试恢复登录
+document.addEventListener("DOMContentLoaded", async ()=>{
+  await restoreLoginFromLocal();
+
+  if(!CURRENT_EMAIL){
+    // fallback: Supabase session
+    const { data } = await supa.auth.getSession();
+    const emailFromSession=data?.session?.user?.email;
+    if(emailFromSession){
+      setCurrentUser(emailFromSession);
+
+      const { data:wl } = await supa
+        .from("dict")
+        .select("email,enabled")
+        .eq("email", emailFromSession)
+        .eq("enabled", true)
+        .limit(1);
+      AUTHORIZED=Array.isArray(wl)&&wl.length>0;
+
+      byId("login-card").classList.add("hidden");
+      if(!AUTHORIZED){
+        byId("unauth-card").classList.remove("hidden");
+      }
+
+      // 同步24h有效期
+      rememberLogin(emailFromSession);
+    }
+  }
 });
 
-// ==== 库存 & 日志 ====
-async function loadOverview(){
-  const tb=document.querySelector('#tbl-overview tbody');tb.innerHTML='加载中...';
-  try{const j=await (await fetch(API_BASE+'/overview')).json();tb.innerHTML='';
-    (j.rows||[]).forEach(r=>{tb.innerHTML+=`<tr><td>${r.model}</td><td>${r.storage}</td><td>${r.total}</td><td>${r.unit}</td><td>${r.last_updated}</td></tr>`});
-  }catch(e){tb.innerHTML='<tr><td colspan=5>加载失败 '+e.message+'</td></tr>';}
+/* ========= ⑤ 全局库存缓存 ========= */
+let masterItemList=[];   // [{model,name,unit,storage,location,material,comments}, ...]
+let stockByKey={};       // {"model@@storage": total}
+
+/* ========= ⑥ 小工具函数（搜索 / 高亮等） ========= */
+function safe(v){
+  return (v===undefined||v===null||v==="") ? "-" : String(v);
 }
-async function loadLogs(){
-  const tb=document.querySelector('#tbl-logs tbody');tb.innerHTML='加载中...';
-  try{const j=await (await fetch(API_BASE+'/logs')).json();window._logs=j.rows||[];renderLogs();}
-  catch(e){tb.innerHTML='<tr><td colspan=7>加载失败 '+e.message+'</td></tr>';}
+function cssKey(m,s){
+  return encodeURIComponent(`${m}@@${s||""}`);
 }
-function renderLogs(){
-  const q=document.getElementById('log-search').value.trim().toLowerCase();
-  const tb=document.querySelector('#tbl-logs tbody');tb.innerHTML='';
-  (window._logs||[]).filter(r=>!q||String(r.model||'').toLowerCase().includes(q)).forEach(r=>{
-    tb.innerHTML+=`<tr><td>${r.type}</td><td>${r.created_at}</td><td>${r.model}</td><td>${r.quantity}</td><td>${r.storage||r.from_storage||r.to_storage||''}</td><td>${r.operator||''}</td><td>${r.comments||''}</td></tr>`;
+function normStr(s){
+  return (s||"")
+    .toString()
+    .toLowerCase()
+    .replace(/[\s.\-_/\\_]+/g,"");
+}
+function highlightMatch(text, term){
+  if(!term) return safe(text||"");
+  const raw=text||"";
+  const nText=normStr(raw);
+  const nTerm=normStr(term);
+  if(!nText.includes(nTerm)) return safe(raw);
+  const pattern=new RegExp(
+    term.split("")
+      .map(ch=>{
+        const esc=ch.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+        return `${esc}[\\s.\\-_/\\\\_]*`;
+      })
+      .join(""),
+    "ig"
+  );
+  return raw.replace(pattern, m=>`<mark>${m}</mark>`);
+}
+function filterPositiveStock(list){
+  return (list||[]).filter(it=>{
+    const key=`${it.model}@@${it.storage||""}`;
+    const stock=Number(stockByKey[key]||0);
+    return stock>0;
   });
 }
-document.getElementById('log-search').oninput=renderLogs;
-document.getElementById('btn-export').onclick=()=>{
-  const q=document.getElementById('log-search').value.trim().toLowerCase();
-  const filtered=(window._logs||[]).filter(r=>!q||String(r.model||'').toLowerCase().includes(q));
-  const csv=Papa.unparse(filtered);const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
-  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='logs.csv';a.click();
-};
+function findByTerm(term){
+  const q=normStr(term);
+  if(!q) return [];
+  return (masterItemList||[]).filter(i=>{
+    const combined=[
+      i.model,i.name,i.storage,i.location,i.material,i.comments
+    ].join("|");
+    return normStr(combined).includes(q);
+  });
+}
 
-// ==== 入库 ====
-document.getElementById('btn-inbound').onclick=async()=>{
-  const b={model:in_model.value,storage:in_storage.value,quantity:Number(in_qty.value),operator:in_operator.value,comments:in_comments.value,unit:'PCS'};
-  const s=document.getElementById('in-status');s.textContent='处理中...';
-  try{const r=await apiPost('/inbound',b);s.textContent='入库成功';loadOverview();loadLogs();}
-  catch(e){s.textContent='失败：'+e.message;}
-};
+/* ========= ⑦ 初始化读取 overview ========= */
+async function loadOverview(){
+  const { data, error } = await supa.from("overview").select("*");
+  if(error){
+    showNotification("初始化库存失败","error");
+    return;
+  }
 
-// ==== 出库 ====
-document.getElementById('btn-outbound').onclick=async()=>{
-  const b={model:out_model.value,storage:out_storage.value,quantity:Number(out_qty.value),operator:out_operator.value,comments:out_comments.value,unit:'PCS'};
-  const s=document.getElementById('out-status');s.textContent='处理中...';
-  try{const r=await apiPost('/outbound',b);s.textContent='出库成功';loadOverview();loadLogs();}
-  catch(e){s.textContent='失败：'+e.message;}
-};
+  masterItemList=(data||[]).map(it=>({
+    model:it.model||"",
+    name:it.name||"",
+    unit:it.unit||"PCS",
+    storage:it.storage||"",
+    location:it.location||"",
+    material:it.material||"",
+    comments:it.comments||""
+  }));
 
-// ==== 移库 ====
-document.getElementById('btn-transfer').onclick=async()=>{
-  const b={model:tr_model.value,from_storage:tr_from.value,to_storage:tr_to.value,quantity:Number(tr_qty.value),operator:tr_operator.value,comments:tr_comments.value,unit:'PCS'};
-  const s=document.getElementById('tr-status');s.textContent='处理中...';
-  try{const r=await apiPost('/transfer',b);s.textContent='移库成功';loadOverview();loadLogs();}
-  catch(e){s.textContent='失败：'+e.message;}
-};
+  stockByKey={};
+  (data||[]).forEach(it=>{
+    const key=`${it.model}@@${it.storage||""}`;
+    stockByKey[key]=Number(it.total||0);
+  });
+
+  switchView('inbound');
+  renderInventoryTable();
+}
+window.onload=loadOverview;
+
+// 后台定时刷新（10分钟）
+let verTimer=null;
+function startVersionPolling(){
+  if(verTimer) clearInterval(verTimer);
+  verTimer=setInterval(async ()=>{
+    await reloadOverview(true);
+  },600000);
+}
+startVersionPolling();
+
+async function reloadOverview(silent=false){
+  const btn=byId("btn-refresh");
+  const old=btn?btn.innerHTML:"";
+  if(btn && !silent){
+    btn.classList.add("disabled");
+    btn.innerHTML="⏳";
+  }
+  const { data, error } = await supa.from("overview").select("*");
+  if(error){
+    if(!silent) showNotification("刷新失败（网络/权限）","error");
+    if(btn){
+      btn.classList.remove("disabled");
+      btn.innerHTML=old;
+    }
+    return;
+  }
+
+  masterItemList=(data||[]).map(it=>({
+    model:it.model||"",
+    name:it.name||"",
+    unit:it.unit||"PCS",
+    storage:it.storage||"",
+    location:it.location||"",
+    material:it.material||"",
+    comments:it.comments||""
+  }));
+
+  stockByKey={};
+  (data||[]).forEach(it=>{
+    const key=`${it.model}@@${it.storage||""}`;
+    stockByKey[key]=Number(it.total||0);
+  });
+
+  const overviewVisible=!byId("overview-view").classList.contains("hidden");
+  if(overviewVisible) renderInventoryTable();
+
+  if(!silent){
+    showNotification(T("refresh"));
+    if(btn){
+      btn.classList.remove("disabled");
+      btn.innerHTML=old;
+    }
+  }
+}
+
+/* ========= ⑧ 视图切换 ========= */
+function switchView(view){
+  ["inbound","outbound","return","transfer","overview","logs"].forEach(v=>{
+    const sec=byId(v+"-view");
+    const tab=byId(v+"-tab");
+    if(!sec||!tab) return;
+    if(v===view){
+      sec.classList.remove("hidden");
+      tab.classList.add("active");
+    }else{
+      sec.classList.add("hidden");
+      tab.classList.remove("active");
+    }
+  });
+
+  if(view==="overview"){
+    renderInventoryTable();
+  }
+  if(view==="logs"){
+    if(!_logsLoadedOnce) reloadLogs();
+    else applyLogsFilter();
+  }
+}
+
+/* ========= ⑨ 库存总览渲染 ========= */
+function renderInventoryTable(list=masterItemList, term=""){
+  const tb=byId("inventory-table-body");
+  if(!tb){
+    console.warn("table body #inventory-table-body 未找到");
+    return;
+  }
+  tb.innerHTML="";
+  const filtered=filterPositiveStock(list||[]);
+  if(!filtered||filtered.length===0){
+    tb.innerHTML=`<tr><td colspan="8" class="text-center py-8 text-gray-500">${
+      LANG==='en'?'No inventory':'暂无库存'
+    }</td></tr>`;
+    return;
+  }
+  filtered.forEach(it=>{
+    const key=`${it.model}@@${it.storage||""}`;
+    const stock=Number(stockByKey[key]||0);
+    tb.insertAdjacentHTML("beforeend",`
+      <tr class="hover:bg-gray-50">
+        <td class="px-6 py-3 break-words whitespace-normal min-w-[100px] max-w-[250px]">${highlightMatch(it.model,term)}</td>
+        <td class="px-6 py-3 break-words whitespace-normal min-w-[100px] max-w-[250px]">${highlightMatch(it.name,term)}</td>
+        <td class="px-6 py-3">${safe(it.unit||"PCS")}</td>
+        <td class="px-6 py-3 font-semibold ${stock<0?'text-red-600':''}">${stock}</td>
+        <td class="px-6 py-3">${highlightMatch(it.storage,term)}</td>
+        <td class="px-6 py-3">${highlightMatch(it.location,term)}</td>
+        <td class="px-6 py-3">${highlightMatch(it.material,term)}</td>
+        <td class="px-6 py-3">${highlightMatch(it.comments,term)}</td>
+      </tr>
+    `);
+  });
+}
+
+// 库存总览搜索框
+document.addEventListener("DOMContentLoaded",()=>{
+  const overviewSearch=byId("overview-search");
+  if(!overviewSearch){
+    console.warn("⚠️ #overview-search 未找到");
+    return;
+  }
+  overviewSearch.addEventListener("keyup",(e)=>{
+    const raw=e.target.value||"";
+    const results=findByTerm(raw);
+    renderInventoryTable(results, raw);
+  });
+  if(masterItemList && masterItemList.length>0){
+    renderInventoryTable(masterItemList,"");
+  }
+});
+
+/* ========= ⑩ 导出库存 CSV ========= */
+function exportOverviewCSV(){
+  const term=(byId("overview-search").value||"").toLowerCase().trim();
+  const base=term
+    ? masterItemList.filter(i=>
+        (i.name||"").toLowerCase().includes(term) ||
+        (i.model||"").toLowerCase().includes(term)||
+        (i.storage||"").toLowerCase().includes(term)
+      )
+    : masterItemList;
+
+  const list=filterPositiveStock(base);
+  const rows=[["model","name","unit","total","storage","location","material","comments"]];
+  list.forEach(it=>{
+    const key=`${it.model}@@${it.storage||""}`;
+    const stock=Number(stockByKey[key]||0);
+    rows.push([
+      it.model||"",
+      it.name||"",
+      it.unit||"PCS",
+      stock,
+      it.storage||"",
+      it.location||"",
+      it.material||"",
+      it.comments||""
+    ]);
+  });
+
+  const csv=rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
+  const blob=new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8;"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url;
+  a.download=`inventory_overview_${Date.now()}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+
+  showNotification(T("done_export_overview",{n:list.length}));
+}
+
+/* ========= 11. “显示全部”给入/出/移库 ========= */
+function showAllFor(which){
+  const list=filterPositiveStock(masterItemList);
+  if(which==='inbound'){
+    inboundRenderList(list,"");
+  }else if(which==='outbound'){
+    outboundRenderList(list,"");
+  }else if(which==='transfer'){
+    transferRenderList(list,"");
+  }
+}
+
+/* ========= 12. 入库 ========= */
+const inboundSearch=byId("inbound-search");
+const inboundResult=byId("inbound-result");
+
+inboundSearch.addEventListener("keyup",(e)=>{
+  const raw=e.target.value||"";
+  if(!normStr(raw)){
+    inboundResult.innerHTML="";
+    return;
+  }
+  inboundRenderList(findByTerm(raw), raw);
+});
+
+let lastInboundKey="";
+let lastInboundTime=0;
+
+function inboundRenderList(results, term=""){
+  inboundResult.innerHTML="";
+  const filtered=filterPositiveStock(results||[]);
+  if(!filtered||filtered.length===0){
+    // 新增 + 入库
+    inboundResult.innerHTML=`
+      <div class="bg-white p-6 rounded-lg shadow">
+        <h3 class="text-lg font-bold mb-3">${
+          LANG==='en'?'New Item + Inbound':'新增物料并入库'
+        }</h3>
+        <div class="grid md:grid-cols-2 gap-3">
+          <div>
+            <label class="text-sm">${LANG==='en'?'Model No.':'型号 *'}</label>
+            <input id="new-model" class="w-full p-2 border rounded" value="${term||""}"/>
+          </div>
+          <div>
+            <label class="text-sm">${LANG==='en'?'Part Name':'部件名称 *'}</label>
+            <input id="new-name" class="w-full p-2 border rounded"/>
+          </div>
+          <div>
+            <label class="text-sm">${LANG==='en'?'Unit':'单位'}</label>
+            <input id="new-unit" class="w-full p-2 border rounded" placeholder="${LANG==='en'?'Default PCS':'默认 PCS'}"/>
+          </div>
+          <div>
+            <label class="text-sm">${LANG==='en'?'Quantity':'数量 *'}</label>
+            <input id="new-qty" type="number" min="1" step="1" class="w-full p-2 border rounded"/>
+          </div>
+          <div>
+            <label class="text-sm">${LANG==='en'?'Storage':'存放地点 *'}</label>
+            <input id="new-storage" class="w-full p-2 border rounded"/>
+          </div>
+          <div>
+            <label class="text-sm">${LANG==='en'?'Location':'使用位置'}</label>
+            <input id="new-location" class="w-full p-2 border rounded"/>
+          </div>
+          <div>
+            <label class="text-sm">${LANG==='en'?'Material':'材质'}</label>
+            <input id="new-material" class="w-full p-2 border rounded"/>
+          </div>
+          <div class="md:col-span-2">
+            <label class="text-sm">${LANG==='en'?'Comments':'备注'}</label>
+            <textarea id="new-comments" rows="2" class="w-full p-2 border rounded"></textarea>
+          </div>
+        </div>
+        <div class="mt-4 flex gap-3">
+          <button class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded w-full md:w-auto"
+                  onclick="addNewItemAndInbound()">${
+            LANG==='en'?'Create & Inbound':'新增并入库'
+          }</button>
+          <button class="bg-gray-100 px-4 py-2 rounded w-full md:w-auto"
+                  onclick="inboundSearch.value=''; inboundResult.innerHTML=''">${
+            LANG==='en'?'Cancel':'取消'
+          }</button>
+        </div>
+      </div>`;
+    return;
+  }
+
+  filtered.forEach(item=>{
+    const key=`${item.model}@@${item.storage||""}`;
+    const stock=Number(stockByKey[key]||0);
+    const k=cssKey(item.model,item.storage);
+
+    inboundResult.insertAdjacentHTML("beforeend",`
+      <div class="bg-white p-6 rounded-lg shadow mb-3">
+        <h3 class="text-lg font-bold mb-2">
+          ${highlightMatch(item.name,term)}
+          <span class="text-gray-500">(${highlightMatch(item.model,term)})</span>
+        </h3>
+        <div class="grid md:grid-cols-3 gap-2 text-sm">
+          <div><b>${LANG==='en'?'Unit':'单位'}:</b> ${safe(item.unit||"PCS")}</div>
+          <div><b>${LANG==='en'?'Stock':'库存'}:</b> ${stock}</div>
+          <div><b>${LANG==='en'?'Material':'材质'}:</b> ${highlightMatch(item.material,term)}</div>
+          <div><b>${LANG==='en'?'Storage':'存放地点'}:</b> ${highlightMatch(item.storage,term)}</div>
+          <div><b>${LANG==='en'?'Location':'使用位置'}:</b> ${highlightMatch(item.location,term)}</div>
+          <div class="md:col-span-3"><b>${LANG==='en'?'Comments':'备注'}:</b> ${highlightMatch(item.comments,term)}</div>
+        </div>
+        <div class="mt-3 flex items-center gap-3 flex-wrap">
+          <input id="inbound-qty-${k}" type="number" min="1" step="1"
+                 class="w-32 p-2 border rounded"
+                 placeholder="${LANG==='en'?'Inbound Qty':'入库数量'}"/>
+          <input id="inbound-comments-${k}" class="w-80 p-2 border rounded"
+                 placeholder="${LANG==='en'?'Comments':'备注'}"/>
+          <button class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded w-full md:w-auto"
+                  onclick="handleInbound('${encodeURIComponent(item.model)}','${encodeURIComponent(item.storage||"")}', this)">
+            ${T("inbound_here")}
+          </button>
+        </div>
+      </div>
+    `);
+  });
+}
+
+async function handleInbound(modelEnc, storageEnc, btn){
+  const model=decodeURIComponent(modelEnc);
+  const storage=decodeURIComponent(storageEnc||"");
+  const key=`${model}@@${storage}`;
+  const k=cssKey(model, storage);
+
+  // 5秒去抖，防重复多次同物料
+  const nowMs=Date.now();
+  const userEmail=CURRENT_EMAIL || "guest";
+  const thisKey=`${userEmail}@@${key}`;
+  if(thisKey===lastInboundKey && nowMs-lastInboundTime<5000){
+    showNotification("该物料刚刚入库，请勿重复提交","error");
+    return;
+  }
+  lastInboundKey=thisKey;
+  lastInboundTime=nowMs;
+
+  // 按钮去重
+  if(btn.dataset.locked==="1"){
+    showNotification(T("not_repeat_click"),"error");
+    return;
+  }
+  btn.dataset.locked="1";
+  setTimeout(()=>{btn.dataset.locked="0";},5000);
+
+  if(btn.classList.contains("disabled")) return;
+  btn.classList.add("disabled");
+  const oldText=btn.innerHTML;
+  btn.innerHTML="⏳";
+
+  const qtyEl=byId(`inbound-qty-${k}`);
+  const cmtEl=byId(`inbound-comments-${k}`);
+  const qty=parseInt(qtyEl?.value||"",10);
+  const comments=(cmtEl?.value||"").trim();
+
+  try {
+    if(!CURRENT_EMAIL){
+      showNotification(T("tip_need_login"),"error");
+      return;
+    }
+    if(!AUTHORIZED){
+      showNotification(T("tip_not_authorized"),"error");
+      return;
+    }
+    if(!qty||qty<=0){
+      showNotification(T("tip_invalid_qty"),"error");
+      return;
+    }
+
+    // 元数据
+    const base=masterItemList.find(i=>i.model===model && (i.storage||"")===storage);
+
+    // RPC: 入库事务
+    const { data, error } = await supa.rpc("fn_inbound_tx",{
+      p_model: model,
+      p_storage: storage,
+      p_name: base?.name || "",
+      p_qty: qty,
+      p_operator: userEmail,
+      p_unit: base?.unit || "PCS",
+      p_location: base?.location || "",
+      p_material: base?.material || "",
+      p_comments: comments || ""
+    });
+    if(error) throw new Error(error.message||"入库失败");
+
+    // 更新本地库存
+    const nextTotal=data?.new_total ?? null;
+    if(nextTotal!==null){
+      stockByKey[key]=nextTotal;
+    }
+
+    // 清输入
+    if(qtyEl) qtyEl.value="";
+    if(cmtEl) cmtEl.value="";
+
+    btn.classList.remove("disabled");
+    btn.innerHTML=oldText || T("inbound_here");
+
+    renderInventoryTable();
+    _logsLoadedOnce=false;
+
+    showNotification(
+      (LANG==='en'
+        ? `Inbound +${qty} to `
+        : `入库成功 +${qty} 至 `)+(storage||"(blank)"),
+      "success"
+    );
+  } catch(e){
+    btn.classList.remove("disabled");
+    btn.innerHTML=oldText || T("inbound_here");
+    showNotification("入库失败：" + (e.message||e),"error");
+  } finally {
+    btn.classList.remove("disabled");
+    btn.innerHTML=oldText || T("inbound_here");
+  }
+}
+
+// 新建物料并入库
+async function addNewItemAndInbound(){
+  if(!CURRENT_EMAIL){
+    showNotification(T("tip_need_login"),"error");
+    return;
+  }
+  if(!AUTHORIZED){
+    showNotification(T("tip_not_authorized"),"error");
+    return;
+  }
+
+  const model   = byId("new-model").value.trim();
+  const name    = byId("new-name").value.trim();
+  const unit    = (byId("new-unit").value.trim()||"PCS");
+  const qty     = parseInt(byId("new-qty").value||"",10);
+  const storage = byId("new-storage").value.trim();
+  const location= byId("new-location").value.trim();
+  const material= byId("new-material").value.trim();
+  const comments= byId("new-comments").value.trim();
+
+  if(!model||!name||!qty||qty<=0||!storage){
+    showNotification(
+      LANG==='en'
+        ? 'Fill required fields: model/name/qty/storage'
+        : '请填写必填项：型号、名称、数量、存放地点',
+      "error"
+    );
+    return;
+  }
+
+  try {
+    const { data, error } = await supa.rpc("fn_inbound_tx",{
+      p_model: model,
+      p_storage: storage,
+      p_name: name,
+      p_qty: qty,
+      p_operator: CURRENT_EMAIL,
+      p_unit: unit,
+      p_location: location,
+      p_material: material,
+      p_comments: comments
+    });
+    if(error) throw new Error(error.message||"新增+入库失败");
+
+    // 本地内存追加
+    if(!masterItemList.find(i=>i.model===model && (i.storage||"")===storage)){
+      masterItemList.push({
+        model,
+        name,
+        unit,
+        storage,
+        location,
+        material,
+        comments
+      });
+    }
+
+    // 库存同步
+    const key=`${model}@@${storage||""}`;
+    const nextTotal=data?.new_total ?? null;
+    if(nextTotal!==null){
+      stockByKey[key]=nextTotal;
+    }
+
+    inboundSearch.value="";
+    inboundResult.innerHTML="";
+
+    showNotification(
+      (LANG==='en'
+        ? `Created "${name}" & inbounded ${qty} to `
+        : `新增“${name}” 并入库 ${qty} 到 `)+storage,
+      "success"
+    );
+
+    renderInventoryTable();
+    _logsLoadedOnce=false;
+  } catch(e){
+    showNotification("新增并入库失败：" + (e.message||e), "error");
+  }
+}
+
+/* ========= 13. 出库 ========= */
+const outboundSearch=byId("outbound-search");
+const outboundResult=byId("outbound-result");
+
+outboundSearch.addEventListener("keyup",(e)=>{
+  const raw=e.target.value||"";
+  if(!normStr(raw)){
+    outboundResult.innerHTML="";
+    return;
+  }
+  outboundRenderList(findByTerm(raw), raw);
+});
+
+function outboundRenderList(results, term=""){
+  outboundResult.innerHTML="";
+  const filtered=filterPositiveStock(results||[]);
+  if(!filtered||filtered.length===0){
+    outboundResult.innerHTML=`
+      <div class="text-gray-500">${T("no_match_or_0")}</div>`;
+    return;
+  }
+
+  filtered.forEach(item=>{
+    const key=`${item.model}@@${item.storage||""}`;
+    const stock=Number(stockByKey[key]||0);
+    const k=cssKey(item.model,item.storage);
+
+    outboundResult.insertAdjacentHTML("beforeend",`
+      <div class="bg-white p-6 rounded-lg shadow mb-3">
+        <h3 class="text-lg font-bold mb-2">
+          ${highlightMatch(item.name,term)}
+          <span class="text-gray-500">
+            (${highlightMatch(item.model,term)})
+          </span>
+        </h3>
+        <div class="grid md:grid-cols-3 gap-2 text-sm">
+          <div><b>${LANG==='en'?'Unit':'单位'}:</b> ${safe(item.unit||"PCS")}</div>
+          <div><b>${LANG==='en'?'Stock':'库存'}:</b> ${stock}</div>
+          <div><b>${LANG==='en'?'Material':'材质'}:</b> ${highlightMatch(item.material,term)}</div>
+          <div><b>${LANG==='en'?'Storage':'存放地点'}:</b> ${highlightMatch(item.storage,term)}</div>
+          <div><b>${LANG==='en'?'Location':'使用位置'}:</b> ${highlightMatch(item.location,term)}</div>
+          <div class="md:col-span-3"><b>${LANG==='en'?'Comments':'备注'}:</b> ${highlightMatch(item.comments,term)}</div>
+        </div>
+        <div class="mt-3 flex flex-col md:flex-row md:items-center gap-3">
+          <input id="outbound-qty-${k}" type="number" min="1" step="1"
+                 class="w-40 p-2 border rounded"
+                 placeholder="${LANG==='en'?'Outbound Qty':'出库数量'}"/>
+          <input id="outbound-recipient-${k}" class="w-60 p-2 border rounded"
+                 placeholder="${LANG==='en'?'Recipient *':'领用人 (Recipient) *'}"/>
+          <input id="outbound-comments-${k}" class="w-80 p-2 border rounded"
+                 placeholder="${LANG==='en'?'Comments':'备注'}"/>
+          <button class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded w-full md:w-auto"
+                  onclick="handleOutbound('${encodeURIComponent(item.model)}','${encodeURIComponent(item.storage||"")}', this)">
+            ${T("outbound_confirm")}
+          </button>
+        </div>
+      </div>
+    `);
+  });
+}
+
+async function handleOutbound(modelEnc,storageEnc,btn){
+  const model=decodeURIComponent(modelEnc);
+  const storage=decodeURIComponent(storageEnc||"");
+  const k=cssKey(model,storage);
+
+  if(!acquireOpLock('outbound', model+'@@'+storage, 5000)){
+    showNotification(T("not_repeat_click"),"error");
+    return;
+  }
+  releaseBtnLater(btn);
+
+  if(!CURRENT_EMAIL){
+    showNotification(T("tip_need_login"),"error");
+    return;
+  }
+  if(!AUTHORIZED){
+    showNotification(T("tip_not_authorized"),"error");
+    return;
+  }
+
+  const qtyEl=byId(`outbound-qty-${k}`);
+  const recEl=byId(`outbound-recipient-${k}`);
+  const cmtEl=byId(`outbound-comments-${k}`);
+
+  const qty=parseInt(qtyEl?.value||"",10);
+  const recipient=(recEl?.value||"").trim();
+  const comments=(cmtEl?.value||"").trim();
+
+  const key=`${model}@@${storage}`;
+  const stock=Number(stockByKey[key]||0);
+
+  if(!qty||qty<=0){
+    showNotification(T("tip_invalid_qty"),"error");
+    return;
+  }
+  if(!recipient){
+    showNotification(T("tip_need_recipient"),"error");
+    return;
+  }
+  if(qty>stock){
+    showNotification(T("tip_stock_not_enough",{stock}),"error");
+    return;
+  }
+
+  const base=masterItemList.find(i=>i.model===model && (i.storage||"")===storage);
+
+  try {
+    // RPC: 出库事务
+    const { data, error } = await supa.rpc("fn_outbound_tx",{
+      p_model:model,
+      p_storage:storage,
+      p_name: base?.name||"",
+      p_qty: qty,
+      p_operator: CURRENT_EMAIL,
+      p_unit: base?.unit||"PCS",
+      p_location: base?.location||"",
+      p_material: base?.material||"",
+      p_comments: comments||"",
+      p_recipient: recipient||""
+    });
+    if(error) throw new Error(error.message||"出库失败");
+
+    const nextTotal=data?.new_total ?? null;
+    if(nextTotal!==null){
+      stockByKey[key]=nextTotal;
+    }
+
+    // 清输入
+    if(qtyEl) qtyEl.value="";
+    if(recEl) recEl.value="";
+    if(cmtEl) cmtEl.value="";
+
+    showNotification(
+      (LANG==='en'
+        ? `Outbound -${qty} from `
+        : `出库成功 -${qty} 从 `)+(storage||"(blank)"),
+      "success"
+    );
+
+    renderInventoryTable();
+    _logsLoadedOnce=false;
+  }catch(e){
+    showNotification("出库失败：" + (e.message||e),"error");
+  }
+}
+
+/* ========= 13.1 退库管理（基于 logs_all 的 OUTBOUND 记录） ========= */
+
+const returnSearch = byId("return-search");
+const returnResult = byId("return-result");
+
+// 缓存当前退库列表，用下标索引给 handleReturn 用
+let _returnList = [];
+
+// 退库搜索：按 型号 / 名称 / 领用人 在 OUTBOUND 日志中模糊匹配
+returnSearch.addEventListener("keyup", async (e)=>{
+  const raw = e.target.value || "";
+  const term = raw.trim().toLowerCase();
+
+  if(!term){
+    returnResult.innerHTML = "";
+    _returnList = [];
+    return;
+  }
+
+  await loadReturnList(term);
+});
+
+// 确保日志已加载（利用现有 reloadLogs / _logsCache）
+async function ensureLogsLoadedForReturn(){
+  if(_logsLoadedOnce) return;
+  await reloadLogs();      // 会从 logs_all 读最多 50000 条
+}
+
+// 从 _logsCache 中筛选 type = OUTBOUND 且匹配搜索词
+async function loadReturnList(term){
+  await ensureLogsLoadedForReturn();
+
+  const list = (_logsCache || []).filter(r=>{
+    if(r.type !== "OUTBOUND") return false;
+    const combined = [
+      r.model, r.name, r.storage,
+      r.recipient, r.operator, r.comments
+    ].join("|").toLowerCase();
+    return combined.includes(term);
+  });
+
+  renderReturnList(list, term);
+}
+
+function renderReturnList(list, term=""){
+  returnResult.innerHTML = "";
+  _returnList = list || [];
+
+  if(!_returnList.length){
+    returnResult.innerHTML = `<div class="text-gray-500">${
+      LANG==='en'
+        ? "No outbound record found"
+        : "未找到相关出库记录"
+    }</div>`;
+    return;
+  }
+
+  _returnList.forEach((r, idx)=>{
+    const key = `${r.model||""}@@${r.storage||""}`;
+    const stock = Number(stockByKey[key] || 0);
+    const timeStr = formatLocalTime(r.created_at);
+
+    returnResult.insertAdjacentHTML("beforeend",`
+      <div class="bg-white p-6 rounded-lg shadow mb-3">
+        <h3 class="text-lg font-bold mb-2">
+          ${highlightMatch(r.name||"", term)}
+          <span class="text-gray-500">
+            (${highlightMatch(r.model||"", term)})
+          </span>
+        </h3>
+
+        <div class="grid md:grid-cols-3 gap-2 text-sm">
+          <div><b>${LANG==='en'?'Unit':'单位'}:</b> ${safe(r.unit||"PCS")}</div>
+          <div><b>${LANG==='en'?'Outbound Qty':'出库数量'}:</b> ${safe(r.quantity)}</div>
+          <div><b>${LANG==='en'?'Current Stock':'当前库存'}:</b> ${stock}</div>
+          <div><b>${LANG==='en'?'Storage':'库位'}:</b> ${highlightMatch(r.storage||"", term)}</div>
+          <div><b>${LANG==='en'?'Recipient':'领用人'}:</b> ${highlightMatch(r.recipient||"", term)}</div>
+          <div><b>${LANG==='en'?'Time':'时间'}:</b> ${safe(timeStr)}</div>
+          <div class="md:col-span-3">
+            <b>${LANG==='en'?'Comments':'备注'}:</b> ${highlightMatch(r.comments||"", term)}
+          </div>
+        </div>
+
+        <div class="mt-3 flex flex-col md:flex-row md:items-center gap-3">
+          <input id="return-qty-${idx}" type="number" min="1" step="1"
+                 class="w-40 p-2 border rounded"
+                 placeholder="${LANG==='en'?'Return Qty':'退库数量'}"/>
+          <input id="return-comments-${idx}" class="w-80 p-2 border rounded"
+                 placeholder="${LANG==='en'?'Comments (optional)':'备注（可选）'}"/>
+          <button class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded w-full md:w-auto"
+                  onclick="handleReturn(${idx}, this)">
+            ${T("return_confirm")}
+          </button>
+        </div>
+      </div>
+    `);
+  });
+}
+
+// 退库确认：写入 returns + 更新 overview.total + 写入 logs_all(type='RETURN')
+async function handleReturn(idx, btn){
+  const row = _returnList[idx];
+  if(!row){
+    showNotification(LANG==='en'?"Record not found":"记录不存在","error");
+    return;
+  }
+
+  const model   = row.model || "";
+  const storage = row.storage || "";
+  const name    = row.name   || "";
+  const unit    = row.unit   || "PCS";
+  const recipient = row.recipient || "";
+
+  if(!acquireOpLock("return", `${model}@@${storage}@@${idx}`, 5000)){
+    showNotification(T("not_repeat_click"),"error");
+    return;
+  }
+  releaseBtnLater(btn);
+
+  if(!CURRENT_EMAIL){
+    showNotification(T("tip_need_login"),"error");
+    return;
+  }
+  if(!AUTHORIZED){
+    showNotification(T("tip_not_authorized"),"error");
+    return;
+  }
+
+  const qtyEl = byId(`return-qty-${idx}`);
+  const cmtEl = byId(`return-comments-${idx}`);
+
+  const qty = parseInt(qtyEl?.value || "", 10);
+  const comments = (cmtEl?.value || "").trim();
+
+  if(!qty || qty <= 0){
+    showNotification(T("tip_invalid_qty"),"error");
+    return;
+  }
+
+  // 尝试从 overview 元数据中拿 location / material
+  const base = masterItemList.find(i => i.model===model && (i.storage||"")===storage);
+
+  try{
+    const { data, error } = await supa.rpc("fn_return_tx", {
+      p_model: model,
+      p_storage: storage,
+      p_name: name,
+      p_qty: qty,
+      p_operator: CURRENT_EMAIL,
+      p_unit: unit,
+      p_location: base?.location || "",
+      p_material: base?.material || "",
+      p_comments: comments || "",
+      p_recipient: recipient || ""
+    });
+
+    if(error) throw new Error(error.message || "Return failed");
+
+    const key = `${model}@@${storage}`;
+    const nextTotal = data?.new_total ?? null;
+    if(nextTotal !== null){
+      stockByKey[key] = nextTotal;
+    }
+
+    // 清空输入框
+    if(qtyEl) qtyEl.value = "";
+    if(cmtEl) cmtEl.value = "";
+
+    showNotification(
+      (LANG==='en'
+        ? `Returned ${qty} to `
+        : `退库成功，数量 ${qty}，库位 `) + (storage || "(blank)"),
+      "success"
+    );
+
+    // 刷新库存总览 + 下次重新拉日志
+    renderInventoryTable();
+    _logsLoadedOnce = false;
+  }catch(e){
+    console.error("Return failed:", e);
+    showNotification(
+      (LANG==='en'?"Return failed: ":"退库失败：") + (e.message || e),
+      "error"
+    );
+  }
+}
+
+/* ========= 14. 移库 ========= */
+const transferSearch=byId("transfer-search");
+const transferResult=byId("transfer-result");
+
+transferSearch.addEventListener("keyup",(e)=>{
+  const raw=e.target.value||"";
+  if(!normStr(raw)){
+    transferResult.innerHTML="";
+    return;
+  }
+  transferRenderList(findByTerm(raw), raw);
+});
+
+function transferRenderList(results,term=""){
+  transferResult.innerHTML="";
+  const filtered=filterPositiveStock(results||[]);
+  if(!filtered||filtered.length===0){
+    transferResult.innerHTML=`
+      <div class="text-gray-500">${T("no_match_or_0")}</div>`;
+    return;
+  }
+
+  filtered.forEach(item=>{
+    const key=`${item.model}@@${item.storage||""}`;
+    const stock=Number(stockByKey[key]||0);
+    const k=cssKey(item.model,item.storage);
+
+    transferResult.insertAdjacentHTML("beforeend",`
+      <div class="bg-white p-6 rounded-lg shadow mb-3">
+        <h3 class="text-lg font-bold mb-2">
+          ${highlightMatch(item.name,term)}
+          <span class="text-gray-500">
+            (${highlightMatch(item.model,term)})
+          </span>
+        </h3>
+
+        <div class="grid md:grid-cols-3 gap-2 text-sm">
+          <div><b>${LANG==='en'?'Unit':'单位'}:</b> ${safe(item.unit||"PCS")}</div>
+          <div><b>${LANG==='en'?'Stock':'库存'}:</b> ${stock}</div>
+          <div><b>${LANG==='en'?'Material':'材质'}:</b> ${highlightMatch(item.material,term)}</div>
+          <div><b>${LANG==='en'?'From Storage':'当前存放地点'}:</b> ${highlightMatch(item.storage,term)}</div>
+          <div><b>${LANG==='en'?'Location':'使用位置'}:</b> ${highlightMatch(item.location,term)}</div>
+          <div class="md:col-span-3"><b>${LANG==='en'?'Comments':'备注'}:</b> ${highlightMatch(item.comments,term)}</div>
+        </div>
+
+        <div class="mt-3 flex flex-col md:flex-row md:items-center gap-3">
+          <input id="transfer-qty-${k}" type="number" min="1" step="1"
+                 class="w-32 p-2 border rounded"
+                 placeholder="${LANG==='en'?'Qty to Move':'移库数量'}"/>
+          <input id="transfer-to-${k}" class="w-60 p-2 border rounded"
+                 placeholder="${LANG==='en'?'New Storage *':'新存放地点 *'}"/>
+          <input id="transfer-comments-${k}" class="w-80 p-2 border rounded"
+                 placeholder="${LANG==='en'?'Comments':'备注'}"/>
+          <button class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded w-full md:w-auto"
+                  onclick="handleTransfer('${encodeURIComponent(item.model)}','${encodeURIComponent(item.storage||"")}', this)">
+            ${T("transfer_confirm")}
+          </button>
+        </div>
+      </div>
+    `);
+  });
+}
+
+async function handleTransfer(modelEnc, fromStorageEnc, btn){
+  const model=decodeURIComponent(modelEnc);
+  const fromStorage=decodeURIComponent(fromStorageEnc||"");
+  const k=cssKey(model,fromStorage);
+
+  if(!acquireOpLock('transfer', model+'@@'+fromStorage, 5000)){
+    showNotification(T("not_repeat_click"),"error");
+    return;
+  }
+  releaseBtnLater(btn);
+
+  if(!CURRENT_EMAIL){
+    showNotification(T("tip_need_login"),"error");
+    return;
+  }
+  if(!AUTHORIZED){
+    showNotification(T("tip_not_authorized"),"error");
+    return;
+  }
+
+  const qtyEl=byId(`transfer-qty-${k}`);
+  const toEl =byId(`transfer-to-${k}`);
+  const cmtEl=byId(`transfer-comments-${k}`);
+
+  const qty=parseInt(qtyEl?.value||"",10);
+  const toStorage=(toEl?.value||"").trim();
+  const comments=(cmtEl?.value||"").trim();
+
+  const keyFrom = `${model}@@${fromStorage}`;
+  const stock   = Number(stockByKey[keyFrom]||0);
+
+  if(!qty||qty<=0){
+    showNotification(T("tip_invalid_qty"),"error");
+    return;
+  }
+  if(qty>stock){
+    showNotification(T("tip_stock_not_enough",{stock}),"error");
+    return;
+  }
+  if(!toStorage){
+    showNotification(T("tip_new_storage"),"error");
+    return;
+  }
+
+  // 找元数据
+  const base=masterItemList.find(i=>i.model===model && (i.storage||"")===fromStorage);
+
+  try{
+    // RPC: 移库事务
+    const { data, error } = await supa.rpc("fn_transfer_tx",{
+      p_model: model,
+      p_from_storage: fromStorage,
+      p_to_storage: toStorage,
+      p_name: base?.name || "",
+      p_qty: qty,
+      p_operator: CURRENT_EMAIL,
+      p_unit: base?.unit || "PCS",
+      p_location: base?.location || "",
+      p_material: base?.material || "",
+      p_comments: comments || ""
+    });
+    if(error) throw new Error(error.message||"移库失败");
+
+    // data 预期可能包含 {new_total_from, new_total_to}
+    const newFrom = data?.new_total_from;
+    const newTo   = data?.new_total_to;
+
+    if(newFrom!==undefined && newFrom!==null){
+      stockByKey[keyFrom]=newFrom;
+    }
+
+    const keyTo = `${model}@@${toStorage}`;
+    if(newTo!==undefined && newTo!==null){
+      stockByKey[keyTo]=newTo;
+    }
+
+    // 如果新库位不存在于 masterItemList，则补上
+    if(!masterItemList.find(i=>i.model===model && (i.storage||"")===toStorage)){
+      masterItemList.push({
+        model,
+        name: base?.name || "",
+        unit: base?.unit || "PCS",
+        storage: toStorage,
+        location: base?.location || "",
+        material: base?.material || "",
+        comments: base?.comments || comments || ""
+      });
+    }
+
+    // 清输入
+    if(qtyEl) qtyEl.value="";
+    if(toEl)  toEl.value="";
+    if(cmtEl) cmtEl.value="";
+
+    showNotification(
+      (LANG==='en'
+        ? `Transfer ${qty} → `
+        : `移库成功 ${qty} → `)+toStorage,
+      "success"
+    );
+
+    renderInventoryTable();
+    _logsLoadedOnce=false;
+  }catch(e){
+    showNotification("移库失败：" + (e.message||e),"error");
+  }
+}
+
+/* ========= 15. 批量导入：入库 CSV =========
+  预期表头（中/英均可接受）：
+  - 型号 / model
+  - 部件名称 / name
+  - 单位 / unit
+  - 数量 / quantity
+  - 存放地点 / storage
+  - 使用位置 / location
+  - 材质 / material
+  - 说明 / comments
+*/
+async function handleBatchUpload(evt){
+  if(!CURRENT_EMAIL){
+    showNotification(T("tip_need_login"),"error");
+    return;
+  }
+  if(!AUTHORIZED){
+    showNotification(T("tip_not_authorized"),"error");
+    return;
+  }
+
+  const file=evt.target.files[0];
+  if(!file){
+    return;
+  }
+
+  Papa.parse(file,{
+    header:true,
+    skipEmptyLines:true,
+    complete: async (res)=>{
+      const rows=res.data||[];
+      let okCount=0;
+      for(const r of rows){
+        const model   = (r["型号"]||r["model"]||r["Model"]||"").trim();
+        const name    = (r["部件名称"]||r["name"]||r["Name"]||"").trim();
+        const unit    = (r["单位"]||r["unit"]||r["Unit"]||"PCS").trim() || "PCS";
+        const qtyRaw  = (r["数量"]||r["quantity"]||r["Quantity"]||"").toString().trim();
+        const qty     = parseInt(qtyRaw,10);
+        const storage = (r["存放地点"]||r["storage"]||r["Storage"]||"").trim();
+        const location= (r["使用位置"]||r["location"]||r["Location"]||"").trim();
+        const material= (r["材质"]||r["material"]||r["Material"]||"").trim();
+        const comments= (r["说明"]||r["comments"]||r["Comments"]||"").trim();
+
+        if(!model||!name||!qty||qty<=0||!storage){
+          console.warn("跳过无效行",r);
+          continue;
+        }
+
+        try{
+          const { data, error } = await supa.rpc("fn_inbound_tx",{
+            p_model: model,
+            p_storage: storage,
+            p_name: name,
+            p_qty: qty,
+            p_operator: CURRENT_EMAIL,
+            p_unit: unit||"PCS",
+            p_location: location||"",
+            p_material: material||"",
+            p_comments: comments||""
+          });
+          if(error) throw new Error(error.message||"批量入库失败");
+
+          // 更新本地缓存
+          if(!masterItemList.find(i=>i.model===model && (i.storage||"")===storage)){
+            masterItemList.push({
+              model,
+              name,
+              unit: unit||"PCS",
+              storage,
+              location,
+              material,
+              comments
+            });
+          }
+          const key=`${model}@@${storage||""}`;
+          const nextTotal=data?.new_total ?? null;
+          if(nextTotal!==null){
+            stockByKey[key]=nextTotal;
+          }
+          okCount++;
+        }catch(e){
+          console.error("批量入库失败行:",r,e);
+        }
+      }
+
+      renderInventoryTable();
+      _logsLoadedOnce=false;
+      showNotification(`批量入库完成: 成功 ${okCount} 条`,"success");
+      evt.target.value="";
+    }
+  });
+}
+
+/* ========= 16. 批量移库 CSV =========
+  预期表头：
+  - 型号 / model
+  - 名称 / name
+  - 单位 / unit
+  - 数量 / quantity
+  - 原存放地点 / from_storage
+  - 新存放地点 / to_storage
+  - 使用位置 / location
+  - 材质 / material
+  - 备注 / comments
+*/
+async function handleBatchTransfer(evt){
+  if(!CURRENT_EMAIL){
+    showNotification(T("tip_need_login"),"error");
+    return;
+  }
+  if(!AUTHORIZED){
+    showNotification(T("tip_not_authorized"),"error");
+    return;
+  }
+
+  const file=evt.target.files[0];
+  if(!file){
+    return;
+  }
+
+  Papa.parse(file,{
+    header:true,
+    skipEmptyLines:true,
+    complete: async (res)=>{
+      const rows=res.data||[];
+      let okCount=0;
+      for(const r of rows){
+        const model   = (r["型号"]||r["model"]||r["Model"]||"").trim();
+        const qtyRaw  = (r["数量"]||r["quantity"]||r["Quantity"]||"").toString().trim();
+        const qty     = parseInt(qtyRaw,10);
+
+        // 支持“原存放地点/新存放地点”
+        const fromStorage = (r["原存放地点"]||r["from_storage"]||r["From Storage"]||r["From"]||"").trim();
+        const toStorage   = (r["新存放地点"]||r["to_storage"]||r["To Storage"]||r["To"]||"").trim();
+
+        const unit    = (r["单位"]||r["unit"]||r["Unit"]||"PCS").trim() || "PCS";
+        const name    = (r["名称"]||r["name"]||r["Name"]||"").trim();
+        const location= (r["使用位置"]||r["location"]||r["Location"]||"").trim();
+        const material= (r["材质"]||r["material"]||r["Material"]||"").trim();
+        const comments= (r["备注"]||r["comments"]||r["Comments"]||"").trim();
+
+        if(!model||!qty||qty<=0||!fromStorage||!toStorage){
+          console.warn("跳过无效移库行",r);
+          continue;
+        }
+
+        // 找元数据 (from库位)
+        const base=masterItemList.find(i=>i.model===model && (i.storage||"")===fromStorage);
+
+        try{
+          const { data, error } = await supa.rpc("fn_transfer_tx",{
+            p_model: model,
+            p_from_storage: fromStorage,
+            p_to_storage: toStorage,
+            p_name: name || base?.name || "",
+            p_qty: qty,
+            p_operator: CURRENT_EMAIL,
+            p_unit: unit || base?.unit || "PCS",
+            p_location: location || base?.location || "",
+            p_material: material || base?.material || "",
+            p_comments: comments || base?.comments || ""
+          });
+          if(error) throw new Error(error.message||"批量移库失败");
+
+          // 更新本地缓存
+          const keyFrom=`${model}@@${fromStorage}`;
+          const keyTo  =`${model}@@${toStorage}`;
+          const newFrom=data?.new_total_from;
+          const newTo  =data?.new_total_to;
+
+          if(newFrom!==undefined && newFrom!==null){
+            stockByKey[keyFrom]=newFrom;
+          }
+          if(newTo!==undefined && newTo!==null){
+            stockByKey[keyTo]=newTo;
+          }
+
+          // 如果新库位在本地不存在，补上
+          if(!masterItemList.find(i=>i.model===model && (i.storage||"")===toStorage)){
+            masterItemList.push({
+              model,
+              name: name || base?.name || "",
+              unit: unit || base?.unit || "PCS",
+              storage: toStorage,
+              location: location || base?.location || "",
+              material: material || base?.material || "",
+              comments: comments || base?.comments || ""
+            });
+          }
+
+          okCount++;
+        }catch(e){
+          console.error("批量移库失败行:",r,e);
+        }
+      }
+
+      renderInventoryTable();
+      _logsLoadedOnce=false;
+      showNotification(`批量移库完成: 成功 ${okCount} 条`,"success");
+      evt.target.value="";
+    }
+  });
+}
+
+/* ========= 17. 操作日志（直接读取 log_all，支持完整搜索 + 日期 + 类型过滤） ========= */
+let _logsCache = [];
+let _logsFiltered = [];
+let _logsLoadedOnce = false;
+
+async function reloadLogs(){
+  const btn = byId("btn-logs-refresh");
+  const oldHTML = btn ? btn.innerHTML : "";
+  if(btn){
+    btn.classList.add("disabled");
+    btn.innerHTML = "⏳";
+  }
+
+  try {
+    // ✅ 按 V4.0 模式：从 logs_all 表直接读取完整日志
+    const { data, error } = await supa
+      .from("logs_all") //
+      .select("*")
+      .order("created_at", { ascending:false })
+      .range(0, 50000); // ✅ 防止默认最多 1000 条
+
+    if(error) throw error;
+
+    _logsCache = data || [];
+    _logsLoadedOnce = true;
+    applyLogsFilter();
+
+  } catch(err){
+    console.error("日志加载失败：", err);
+    showNotification("日志加载失败：" + err.message, "error");
+  }
+
+  if(btn){
+    btn.classList.remove("disabled");
+    btn.innerHTML = oldHTML;
+  }
+}
+
+function applyLogsFilter(){
+  const term = (byId("logs-search").value||"").trim().toLowerCase();
+  const type = byId("logs-type").value;
+  const d1   = byId("logs-date-start").value;
+  const d2   = byId("logs-date-end").value;
+
+  _logsFiltered = _logsCache.filter(r=>{
+    if(type !== "ALL" && r.type !== type) return false;
+
+    if(d1 && r.created_at < d1) return false;
+    if(d2 && r.created_at > (d2 + " 23:59:59")) return false;
+
+    if(term){
+      const combined = [
+        r.model, r.name, r.unit, r.quantity, r.storage,
+        r.from_storage, r.to_storage, r.recipient,
+        r.operator, r.comments
+      ].join("|").toLowerCase();
+      if(!combined.includes(term)) return false;
+    }
+    return true;
+  });
+
+  renderLogsTable();
+}
+
+function renderLogsTable(){
+  const body = byId("logs-table-body");
+  const empty= byId("logs-empty");
+
+  body.innerHTML = "";
+  if(!_logsFiltered.length){
+    empty.classList.remove("hidden");
+    return;
+  }
+  empty.classList.add("hidden");
+
+  _logsFiltered.forEach(r=>{
+    body.insertAdjacentHTML("beforeend",`
+      <tr class="hover:bg-gray-50">
+        <td>${formatLocalTime(r.created_at)}</td>
+        <td>${r.type||""}</td>
+        <td>${r.model||""}</td>
+        <td>${r.name||""}</td>
+        <td>${r.unit||""}</td>
+        <td>${r.quantity||""}</td>
+        <td>${r.storage||""}</td>
+        <td>${r.from_storage||""}</td>
+        <td>${r.to_storage||""}</td>
+        <td>${r.recipient||""}</td>
+        <td>${r.operator||""}</td>
+        <td>${r.comments||""}</td>
+      </tr>
+    `);
+  });
+}
+
+// 导出日志 CSV（当前筛选结果）
+function exportLogs(){
+  if(!_logsFiltered || _logsFiltered.length === 0){
+    showNotification(LANG==='en'?"No data to export":"无可导出的记录","warning");
+    return;
+  }
+
+  const rows = _logsFiltered.map(r => ({
+    time: formatLocalTime(r.created_at),
+    type: r.type || "",
+    model: r.model || "",
+    name: r.name || "",
+    unit: r.unit || "",
+    quantity: r.quantity || "",
+    storage: r.storage || "",
+    from_storage: r.from_storage || "",
+    to_storage: r.to_storage || "",
+    recipient: r.recipient || "",
+    operator: r.operator || "",
+    comments: r.comments || ""
+  }));
+
+ 
+   // ✅ 生成 CSV 内容
+  let csv = Papa.unparse(rows, { quotes: true });
+
+  // ✅ 在最前面加 UTF-8 BOM 防止 Excel 乱码
+  csv = "\ufeff" + csv;
+
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "operation_logs_export.csv";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  // ✅ 导出成功提示
+  showNotification(`${LANG==='en'?'Exported':'已导出'} ${rows.length} ${LANG==='en'?'records':'条记录'}`, "success");
+}
+
+// ✅ 绑定按钮事件
+byId("btn-logs-export")?.addEventListener("click", exportLogs);
+
 </script>
+
 </body>
 </html>
