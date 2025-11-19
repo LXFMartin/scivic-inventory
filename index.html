@@ -2234,6 +2234,14 @@ function applyLogsFilter(){
   renderLogsTable();
 }
 
+const logsSearch = byId("logs-search");
+if (logsSearch) {
+  logsSearch.addEventListener("keyup", () => {
+    _logsPage = 1;          // ⭐ 搜索时自动回到第一页
+    applyLogsFilter();
+  });
+}
+
 function renderLogsTable(){
   const body = byId("logs-table-body");
   const empty= byId("logs-empty");
