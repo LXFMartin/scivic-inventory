@@ -2316,14 +2316,19 @@ function applyLogsFilter(){
     if(d1 && r.created_at < d1) return false;
     if(d2 && r.created_at > (d2 + " 23:59:59")) return false;
 
-    if(term){
-      const combined = [
-        r.model, r.name, r.unit, r.quantity, r.storage,
-        r.from_storage, r.to_storage, r.recipient,
-        r.operator, r.comments
-      ].join("|").toLowerCase();
-      if(!combined.includes(term)) return false;
-    }
+    if (term) {
+  const nTerm = normStr(term);  // ⭐ 标准化搜索词
+
+  const combined = [
+    r.model, r.name, r.unit, r.quantity, r.storage,
+    r.from_storage, r.to_storage, r.recipient,
+    r.operator, r.comments
+  ].join("|");
+
+  const nCombined = normStr(combined);   // ⭐ 标准化日志内容
+
+  if (!nCombined.includes(nTerm)) return false;   // ⭐ 标准化后的模糊匹配
+}
     return true;
   });
   _logsPage = 1; // ⭐ 每次筛选自动跳回第 1 页
