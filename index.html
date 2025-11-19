@@ -286,6 +286,7 @@
             <tbody id="inventory-table-body"></tbody>
           </table>
         </div>
+        <div id="overview-pager" class="mt-3 mb-3 text-center space-x-2"></div>
       </div>
     </section>
 
@@ -1068,36 +1069,104 @@ function switchView(view){
 }
 
 /* ========= ⑨ 库存总览渲染 ========= */
-function renderInventoryTable(list=masterItemList, term=""){
-  const tb=byId("inventory-table-body");
-  if(!tb){
-    console.warn("table body #inventory-table-body 未找到");
+function renderInventoryTable(list = masterItemList, term = "") {
+  const tb = byId("inventory-table-body");
+  if (!tb) return;
+
+  // 搜索关键字（用于高亮）
+  const keyword = (term || "").trim().toLowerCase();
+
+  function highlight(text) {
+    if (!keyword) return safe(text || "");
+    const esc = keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return safe(text || "").replace(
+      new RegExp(`(${esc})`, "gi"),
+      `<mark class="bg-yellow-200 text-black">$1</mark>`
+    );
+  }
+
+  // 正常过滤（保留正库存）
+  const base = filterPositiveStock(list || []);
+
+  // 保存过滤结果，用于分页
+  _overviewFiltered = base;
+  const total = _overviewFiltered.length;
+
+  // 分页计算
+  const start = (_overviewPage - 1) * OVERVIEW_PER_PAGE;
+  const end = Math.min(start + OVERVIEW_PER_PAGE, total);
+  const pageRows = _overviewFiltered.slice(start, end);
+
+  // 清空表格
+  tb.innerHTML = "";
+
+  // 空状态
+  if (!pageRows.length) {
+    tb.innerHTML = `<tr><td colspan="8" class="py-6 text-center text-gray-500">
+      ${LANG === "en" ? "No inventory" : "暂无库存"}
+    </td></tr>`;
     return;
   }
-  tb.innerHTML="";
-  const filtered=filterPositiveStock(list||[]);
-  if(!filtered||filtered.length===0){
-    tb.innerHTML=`<tr><td colspan="8" class="text-center py-8 text-gray-500">${
-      LANG==='en'?'No inventory':'暂无库存'
-    }</td></tr>`;
-    return;
-  }
-  filtered.forEach(it=>{
-    const key=`${it.model}@@${it.storage||""}`;
-    const stock=Number(stockByKey[key]||0);
-    tb.insertAdjacentHTML("beforeend",`
+
+  // 渲染每一行
+  pageRows.forEach((it) => {
+    const key = `${it.model}@@${it.storage || ""}`;
+    const stock = Number(stockByKey[key] || 0);
+
+    tb.insertAdjacentHTML("beforeend", `
       <tr class="hover:bg-gray-50">
-        <td class="px-6 py-3 break-words whitespace-normal min-w-[100px] max-w-[250px]">${highlightMatch(it.model,term)}</td>
-        <td class="px-6 py-3 break-words whitespace-normal min-w-[100px] max-w-[250px]">${highlightMatch(it.name,term)}</td>
-        <td class="px-6 py-3">${safe(it.unit||"PCS")}</td>
-        <td class="px-6 py-3 font-semibold ${stock<0?'text-red-600':''}">${stock}</td>
-        <td class="px-6 py-3">${highlightMatch(it.storage,term)}</td>
-        <td class="px-6 py-3">${highlightMatch(it.location,term)}</td>
-        <td class="px-6 py-3">${highlightMatch(it.material,term)}</td>
-        <td class="px-6 py-3">${highlightMatch(it.comments,term)}</td>
+        <td class="px-6 py-3">${highlight(it.model)}</td>
+        <td class="px-6 py-3">${highlight(it.name)}</td>
+        <td class="px-6 py-3">${safe(it.unit || "PCS")}</td>
+        <td class="px-6 py-3 font-semibold ${stock < 0 ? "text-red-600" : ""}">${stock}</td>
+        <td class="px-6 py-3">${highlight(it.storage)}</td>
+        <td class="px-6 py-3">${highlight(it.location)}</td>
+        <td class="px-6 py-3">${highlight(it.material)}</td>
+        <td class="px-6 py-3">${highlight(it.comments)}</td>
       </tr>
     `);
   });
+
+  // 渲染分页按钮
+  renderOverviewPager(total);
+}
+
+  function renderOverviewPager(total) {
+  const pager = byId("overview-pager");
+  if (!pager) return;
+
+  const pages = Math.ceil(total / OVERVIEW_PER_PAGE);
+  if (pages <= 1) {
+    pager.innerHTML = "";
+    return;
+  }
+
+  pager.innerHTML = `
+    <button onclick="changeOverviewPage(-1)" 
+      class="px-3 py-1 border rounded ${_overviewPage === 1 ? 'opacity-40' : ''}">
+      ⬅️ Prev
+    </button>
+
+    <span class="text-sm">
+      Page ${_overviewPage} / ${pages} （共 ${total} 条）
+    </span>
+
+    <button onclick="changeOverviewPage(1)" 
+      class="px-3 py-1 border rounded ${_overviewPage === pages ? 'opacity-40' : ''}">
+      Next ➡️
+    </button>
+  `;
+}
+
+function changeOverviewPage(delta) {
+  const total = _overviewFiltered.length;
+  const pages = Math.ceil(total / OVERVIEW_PER_PAGE);
+
+  const newPage = _overviewPage + delta;
+  if (newPage < 1 || newPage > pages) return;
+
+  _overviewPage = newPage;
+  renderInventoryTable(_overviewFiltered, byId("overview-search").value.trim().toLowerCase());
 }
 
 // 库存总览搜索框
@@ -1109,6 +1178,7 @@ document.addEventListener("DOMContentLoaded",()=>{
   }
   overviewSearch.addEventListener("keyup",(e)=>{
     const raw=e.target.value||"";
+    _overviewPage = 1; 
     const results=findByTerm(raw);
     renderInventoryTable(results, raw);
   });
