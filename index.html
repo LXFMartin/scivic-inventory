@@ -1069,6 +1069,9 @@ function switchView(view){
 }
 
 /* ========= ⑨ 库存总览渲染 ========= */
+let _overviewPage = 1;
+const OVERVIEW_PER_PAGE = 100;  // 每页显示 100 条
+let _overviewFiltered = [];
 function renderInventoryTable(list = masterItemList, term = "") {
   const tb = byId("inventory-table-body");
   if (!tb) return;
@@ -1131,7 +1134,7 @@ function renderInventoryTable(list = masterItemList, term = "") {
   renderOverviewPager(total);
 }
 
-  function renderOverviewPager(total) {
+function renderOverviewPager(total) {
   const pager = byId("overview-pager");
   if (!pager) return;
 
