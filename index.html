@@ -350,6 +350,7 @@
             </thead>
             <tbody id="logs-table-body"></tbody>
           </table>
+          <div id="logs-pager" class="mt-3 text-center space-x-2"></div>
         </div>
         <div id="logs-empty" class="text-center text-gray-500 py-6 hidden">暂无日志</div>
       </div>
@@ -2167,6 +2168,8 @@ async function handleBatchTransfer(evt){
 
 /* ========= 17. 操作日志（直接读取 log_all，支持完整搜索 + 日期 + 类型过滤） ========= */
 let _logsCache = [];
+let _logsPage = 1;          // 当前页
+const LOGS_PER_PAGE = 100;  // 每页显示 100 条
 let _logsFiltered = [];
 let _logsLoadedOnce = false;
 
@@ -2227,22 +2230,30 @@ function applyLogsFilter(){
     }
     return true;
   });
-
+  _logsPage = 1; // ⭐ 每次筛选自动跳回第 1 页
   renderLogsTable();
 }
 
 function renderLogsTable(){
   const body = byId("logs-table-body");
   const empty= byId("logs-empty");
-
   body.innerHTML = "";
+
   if(!_logsFiltered.length){
     empty.classList.remove("hidden");
     return;
   }
   empty.classList.add("hidden");
 
-  _logsFiltered.forEach(r=>{
+  // ⭐ 分页计算
+  const total = _logsFiltered.length;
+  const start = (_logsPage - 1) * LOGS_PER_PAGE;
+  const end   = Math.min(start + LOGS_PER_PAGE, total);
+
+  const pageRows = _logsFiltered.slice(start, end);
+
+  // ⭐ 渲染当前页
+  pageRows.forEach(r=>{
     body.insertAdjacentHTML("beforeend",`
       <tr class="hover:bg-gray-50">
         <td>${formatLocalTime(r.created_at)}</td>
@@ -2260,6 +2271,45 @@ function renderLogsTable(){
       </tr>
     `);
   });
+
+  renderLogsPager(total);   // ⭐ 分页按钮
+}
+
+function renderLogsPager(total){
+  const pager = byId("logs-pager");
+  if(!pager) return;
+
+  const pages = Math.ceil(total / LOGS_PER_PAGE);
+  if(pages <= 1){
+    pager.innerHTML = "";
+    return;
+  }
+
+  pager.innerHTML = `
+    <button onclick="changeLogsPage(-1)" 
+            class="px-3 py-1 border rounded ${_logsPage===1?'opacity-40':''}">
+      ⬅️ Prev
+    </button>
+
+    <span class="text-sm">
+      Page ${_logsPage} / ${pages} （共 ${total} 条）
+    </span>
+
+    <button onclick="changeLogsPage(1)" 
+            class="px-3 py-1 border rounded ${_logsPage===pages?'opacity-40':''}">
+      Next ➡️
+    </button>
+  `;
+}
+
+function changeLogsPage(delta){
+  const pages = Math.ceil(_logsFiltered.length / LOGS_PER_PAGE);
+  const newPage = _logsPage + delta;
+
+  if(newPage < 1 || newPage > pages) return;
+
+  _logsPage = newPage;
+  renderLogsTable();
 }
 
 // 导出日志 CSV（当前筛选结果）
