@@ -2245,6 +2245,17 @@ if (logsSearch) {
 function renderLogsTable(){
   const body = byId("logs-table-body");
   const empty= byId("logs-empty");
+    // ⭐⭐ 搜索关键字高亮
+  const keyword = (byId("logs-search").value || "").trim().toLowerCase();
+
+  function highlight(text) {
+    if (!keyword) return safe(text || "");
+    const esc = keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return safe(text || "").replace(
+      new RegExp(`(${esc})`, "gi"),
+      `<mark class="bg-yellow-200 text-black">$1</mark>`
+    );
+  }
   body.innerHTML = "";
 
   if(!_logsFiltered.length){
@@ -2266,14 +2277,14 @@ function renderLogsTable(){
       <tr class="hover:bg-gray-50">
         <td>${formatLocalTime(r.created_at)}</td>
         <td>${r.type||""}</td>
-        <td>${r.model||""}</td>
-        <td>${r.name||""}</td>
+        <td>${highlight(r.model)}</td>
+        <td>${highlight(r.name)}</td>
         <td>${r.unit||""}</td>
         <td>${r.quantity||""}</td>
-        <td>${r.storage||""}</td>
-        <td>${r.from_storage||""}</td>
-        <td>${r.to_storage||""}</td>
-        <td>${r.recipient||""}</td>
+        <td>${highlight(r.storage)}</td>
+        <td>${highlight(r.from_storage)}</td>
+        <td>${highlight(r.to_storage)}</td>
+        <td>${highlight(r.recipient)}</td>
         <td>${r.operator||""}</td>
         <td>${r.comments||""}</td>
       </tr>
