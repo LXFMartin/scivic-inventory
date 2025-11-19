@@ -1080,13 +1080,36 @@ function renderInventoryTable(list = masterItemList, term = "") {
   const keyword = (term || "").trim().toLowerCase();
 
   function highlight(text) {
-    if (!keyword) return safe(text || "");
-    const esc = keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return safe(text || "").replace(
-      new RegExp(`(${esc})`, "gi"),
-      `<mark class="bg-yellow-200 text-black">$1</mark>`
-    );
-  }
+  if (!keyword) return safe(text || "");
+
+  const raw = text || "";
+
+  // 转为忽略空格/符号后的字符串
+  const normRaw = normStr(raw);
+  const normKey = normStr(keyword);
+
+  // 若标准化后不包含，则无需高亮
+  if (!normRaw.includes(normKey)) return safe(raw);
+
+  // 构造匹配正则：每个字符之间允许出现空格、-、_、/等
+  const pattern = new RegExp(
+    keyword
+      .split("")
+      .map(ch => {
+        const esc = ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        return `${esc}[\\s.\\-_/\\\\_]*`;
+      })
+      .join(""),
+    "ig"
+  );
+
+  // 高亮显示
+  return raw.replace(
+    pattern,
+    m => `<mark>${m}</mark>`
+  );
+}
+
 
   // 正常过滤（保留正库存）
   const base = filterPositiveStock(list || []);
