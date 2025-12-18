@@ -53,8 +53,8 @@
     th { white-space: nowrap !important; }
     th#th-model,
     th#logs-th-model {
-      min-width:90px;
-      max-width:110px;
+      min-width:50px;
+      max-width:100px;
     }
 
     table { table-layout:auto !important; width:100%; }
@@ -102,7 +102,7 @@
   <div id="login-card" class="max-w-xl mx-auto bg-white rounded-lg shadow p-6 mb-6">
     <h3 class="text-lg font-semibold mb-2" id="login-title">登录 (Email + 验证码)</h3>
     <p class="text-sm text-gray-500 mb-4" id="login-desc">
-      输入邮箱获取验证码，验证成功后登录。仅白名单邮箱可进行入/出库、批量导入与移库等写操作。
+      输入邮箱获取验证码，验证成功后登录。仅白名单邮箱可搜索/浏览库存与日志，并进行入/出/移/退库等操作。
     </p>
     <div class="grid md:grid-cols-2 gap-3">
       <div class="md:col-span-2">
@@ -132,7 +132,7 @@
        class="max-w-xl mx-auto bg-amber-50 border border-amber-200 text-amber-800 rounded-lg p-5 mb-6 hidden">
     <div class="font-semibold mb-1" id="unauth-title">未授权用户无法进行写操作</div>
     <div class="text-sm" id="unauth-desc">
-      当前邮箱未在白名单中。你仍可浏览“库存总览/操作日志”，但入/出库、批量导入、移库操作已被禁用。
+      当前邮箱未在白名单中。库存搜索、库存总览与操作日志浏览均不可用，入/出库、批量导入、移库操作也被禁用。
     </div>
   </div>
 
@@ -387,13 +387,13 @@ const I18N = {
     current_user_label:"当前操作用户",
     logout:"退出登录",
     login_title:"登录 (Email + 验证码)",
-    login_desc:"输入邮箱获取验证码，验证成功后登录。仅白名单邮箱可进行入/出库、批量导入与移库等写操作。",
+    login_desc:"输入邮箱获取验证码，验证成功后登录。仅白名单邮箱可搜索/浏览库存与日志，并进行入/出/移/退库等操作。",
     label_email:"邮箱 (Email)",
     label_otp:"验证码 (OTP)",
     send_otp:"发送验证码",
     verify_login:"验证并登录",
     unauthorized_title:"未授权用户无法进行写操作",
-    unauthorized_desc:"当前邮箱未在白名单中。你仍可浏览“库存总览/操作日志”，但入/出库、批量导入、移库操作已被禁用。",
+    unauthorized_desc:"当前邮箱未在白名单中。库存搜索、库存总览与操作日志浏览均不可用，入/出库、批量导、移库操作也被禁用。",
     tab_inbound:"入库管理",
     tab_outbound:"出库管理",
     tab_transfer:"移库管理",
@@ -473,13 +473,13 @@ const I18N = {
     current_user_label:"Current user",
     logout:"Log out",
     login_title:"Sign in (Email + OTP)",
-    login_desc:"Enter your email to receive a code. Only whitelisted emails can perform inbound/outbound, batch import and transfer.",
+    login_desc:"Enter your email to receive a code. Only whitelisted emails can search inventory, browse overview/logs, and perform inbound/outbound/transfer/return operations.",
     label_email:"Email",
     label_otp:"OTP",
     send_otp:"Send Code",
     verify_login:"Verify & Sign In",
     unauthorized_title:"Unauthorized users cannot write",
-    unauthorized_desc:"Your email is not whitelisted. You can still browse Overview/Logs; inbound/outbound/transfer are disabled.",
+    unauthorized_desc:"Your email is not whitelisted. Inventory search, overview, and logs are unavailable; inbound/outbound/transfer are also disabled.",
     tab_inbound:"Inbound",
     tab_outbound:"Outbound",
     tab_transfer:"Transfer",
@@ -670,6 +670,7 @@ function applyI18n(){
 
 document.addEventListener("DOMContentLoaded", injectLangToggle);
 document.addEventListener("DOMContentLoaded", applyI18n);
+document.addEventListener("DOMContentLoaded", syncAccessUI);
 
 /* ========= ③ DOM/工具函数 ========= */
 function byId(id){ return document.getElementById(id); }
@@ -702,6 +703,19 @@ const showNotification=(msg,type="success")=>{
 
 let CURRENT_EMAIL="";
 let AUTHORIZED=false;
+
+function ensureAuthorizedAccess(options={notify:true}){
+  const { notify=true } = options;
+  if(!CURRENT_EMAIL){
+    if(notify) showNotification(T("tip_need_login"),"error");
+    return false;
+  }
+  if(!AUTHORIZED){
+    if(notify) showNotification(T("tip_not_authorized"),"error");
+    return false;
+  }
+  return true;
+}
 
 // 登录有效期：24 小时
 const LOGIN_TTL_MS = 24 * 60 * 60 * 1000;
@@ -744,6 +758,11 @@ async function restoreLoginFromLocal(){
   AUTHORIZED=Array.isArray(wl)&&wl.length>0;
   if(!AUTHORIZED){
     byId("unauth-card").classList.remove("hidden");
+  }
+
+  syncAccessUI();
+  if(AUTHORIZED){
+    await handleAuthorizedSession();
   }
 }
 
@@ -853,6 +872,12 @@ async function verifyOtp(){
   byId("login-card").classList.add("hidden");
   byId("unauth-card").classList.toggle("hidden", AUTHORIZED);
 
+  if(AUTHORIZED){
+    await handleAuthorizedSession();
+  }else{
+    handleUnauthorizedSession();
+  }
+
   // 记住登录 24h
   rememberLogin(email);
 
@@ -867,10 +892,13 @@ async function verifyOtp(){
 // 退出登录
 async function logout(){
   await supa.auth.signOut();
+  stopVersionPolling();
   AUTHORIZED=false;
   setCurrentUser("");
   byId("login-card").classList.remove("hidden");
   byId("unauth-card").classList.add("hidden");
+
+  handleUnauthorizedSession();
 
   localStorage.removeItem("scivic_auth_email");
   localStorage.removeItem("scivic_auth_expires");
@@ -900,6 +928,12 @@ document.addEventListener("DOMContentLoaded", async ()=>{
       byId("login-card").classList.add("hidden");
       if(!AUTHORIZED){
         byId("unauth-card").classList.remove("hidden");
+      }
+
+      if(AUTHORIZED){
+        await handleAuthorizedSession();
+      }else{
+        handleUnauthorizedSession();
       }
 
       // 同步24h有效期
@@ -950,9 +984,10 @@ function filterPositiveStock(list){
   });
 }
 function findByTerm(term){
-  const q=normStr(term);
-  if(!q) return [];
-  return (masterItemList||[]).filter(i=>{
+  const q = normStr(term);
+  const base = masterItemList || [];
+  if(!q) return base;
+  return base.filter(i=>{
     const combined=[
       i.model,i.name,i.storage,i.location,i.material,i.comments
     ].join("|");
@@ -962,6 +997,7 @@ function findByTerm(term){
 
 /* ========= ⑦ 初始化读取 overview ========= */
 async function loadOverview(){
+  if(!ensureAuthorizedAccess({notify:false})) return;
   const { data, error } = await supa.from("overview").select("*");
   if(error){
     showNotification("初始化库存失败","error");
@@ -987,17 +1023,25 @@ async function loadOverview(){
   switchView('inbound');
   renderInventoryTable();
 }
-window.onload=loadOverview;
+window.onload=()=>{};
 
 // 后台定时刷新（10分钟）
 let verTimer=null;
+function stopVersionPolling(){
+  if(verTimer){
+    clearInterval(verTimer);
+    verTimer=null;
+  }
+}
 function startVersionPolling(){
-  if(verTimer) clearInterval(verTimer);
+  if(!AUTHORIZED) return;
+  stopVersionPolling();
   verTimer=setInterval(async ()=>{
-    await reloadOverview(true);
+    if(AUTHORIZED){
+      await reloadOverview(true);
+    }
   },600000);
 }
-startVersionPolling();
 
 async function reloadOverview(silent=false){
   const btn=byId("btn-refresh");
@@ -1005,6 +1049,13 @@ async function reloadOverview(silent=false){
   if(btn && !silent){
     btn.classList.add("disabled");
     btn.innerHTML="⏳";
+  }
+  if(!ensureAuthorizedAccess({notify:!silent})){
+    if(btn && !silent){
+      btn.classList.remove("disabled");
+      btn.innerHTML=old;
+    }
+    return;
   }
   const { data, error } = await supa.from("overview").select("*");
   if(error){
@@ -1046,6 +1097,9 @@ async function reloadOverview(silent=false){
 
 /* ========= ⑧ 视图切换 ========= */
 function switchView(view){
+  if((view==="overview"||view==="logs") && !ensureAuthorizedAccess()){
+    return;
+  }
   ["inbound","outbound","return","transfer","overview","logs"].forEach(v=>{
     const sec=byId(v+"-view");
     const tab=byId(v+"-tab");
@@ -1109,7 +1163,6 @@ function renderInventoryTable(list = masterItemList, term = "") {
     m => `<mark>${m}</mark>`
   );
 }
-
 
   // 正常过滤（保留正库存）
   const base = filterPositiveStock(list || []);
@@ -1203,6 +1256,12 @@ document.addEventListener("DOMContentLoaded",()=>{
     return;
   }
   overviewSearch.addEventListener("keyup",(e)=>{
+    if(!ensureAuthorizedAccess()){
+      overviewSearch.value="";
+      byId("inventory-table-body").innerHTML="";
+      byId("overview-pager").innerHTML="";
+      return;
+    }
     const raw=e.target.value||"";
     _overviewPage = 1; 
     const results=findByTerm(raw);
@@ -1215,16 +1274,13 @@ document.addEventListener("DOMContentLoaded",()=>{
 
 /* ========= ⑩ 导出库存 CSV ========= */
 function exportOverviewCSV(){
-  const term=(byId("overview-search").value||"").toLowerCase().trim();
-  const base=term
-    ? masterItemList.filter(i=>
-        (i.name||"").toLowerCase().includes(term) ||
-        (i.model||"").toLowerCase().includes(term)||
-        (i.storage||"").toLowerCase().includes(term)
-      )
-    : masterItemList;
+  const raw = (byId("overview-search").value||"");
+  // 与前端展示统一：使用 findByTerm + normStr 作为搜索内核
+  const base = raw.trim()
+    ? findByTerm(raw)
+    : (masterItemList || []);
 
-  const list=filterPositiveStock(base);
+  const list = filterPositiveStock(base);
   const rows=[["model","name","unit","total","storage","location","material","comments"]];
   list.forEach(it=>{
     const key=`${it.model}@@${it.storage||""}`;
@@ -1255,6 +1311,9 @@ function exportOverviewCSV(){
 
 /* ========= 11. “显示全部”给入/出/移库 ========= */
 function showAllFor(which){
+  if(!ensureAuthorizedAccess()){
+    return;
+  }
   const list=filterPositiveStock(masterItemList);
   if(which==='inbound'){
     inboundRenderList(list,"");
@@ -1270,6 +1329,11 @@ const inboundSearch=byId("inbound-search");
 const inboundResult=byId("inbound-result");
 
 inboundSearch.addEventListener("keyup",(e)=>{
+  if(!ensureAuthorizedAccess()){
+    inboundSearch.value="";
+    inboundResult.innerHTML="";
+    return;
+  }
   const raw=e.target.value||"";
   if(!normStr(raw)){
     inboundResult.innerHTML="";
@@ -1542,7 +1606,7 @@ async function addNewItemAndInbound(){
     showNotification(
       (LANG==='en'
         ? `Created "${name}" & inbounded ${qty} to `
-        : `新增“${name}” 并入库 ${qty} 到 `)+storage,
+        : `增“${name}” 并入库 ${qty} 到 `)+storage,
       "success"
     );
 
@@ -1558,6 +1622,11 @@ const outboundSearch=byId("outbound-search");
 const outboundResult=byId("outbound-result");
 
 outboundSearch.addEventListener("keyup",(e)=>{
+  if(!ensureAuthorizedAccess()){
+    outboundSearch.value="";
+    outboundResult.innerHTML="";
+    return;
+  }
   const raw=e.target.value||"";
   if(!normStr(raw)){
     outboundResult.innerHTML="";
@@ -1708,37 +1777,47 @@ const returnResult = byId("return-result");
 // 缓存当前退库列表，用下标索引给 handleReturn 用
 let _returnList = [];
 
-// 退库搜索：按 型号 / 名称 / 领用人 在 OUTBOUND 日志中模糊匹配
+// 退库搜索：按 型号 / 名称 / 领用人 在 OUTBOUND 日志中模糊匹配（统一使用 normStr 模糊匹配，支持 rs→R S）
 returnSearch.addEventListener("keyup", async (e)=>{
+  if(!ensureAuthorizedAccess()){
+    returnSearch.value = "";
+    returnResult.innerHTML = "";
+    _returnList = [];
+    return;
+  }
   const raw = e.target.value || "";
-  const term = raw.trim().toLowerCase();
+  const norm = normStr(raw);
 
-  if(!term){
+  if(!norm){
     returnResult.innerHTML = "";
     _returnList = [];
     return;
   }
 
-  await loadReturnList(term);
+  await loadReturnList(raw);
 });
 
 // 确保日志已加载（利用现有 reloadLogs / _logsCache）
 async function ensureLogsLoadedForReturn(){
+  if(!ensureAuthorizedAccess()) return;
   if(_logsLoadedOnce) return;
   await reloadLogs();      // 会从 logs_all 读最多 50000 条
 }
 
-// 从 _logsCache 中筛选 type = OUTBOUND 且匹配搜索词
+// 从 _logsCache 中筛选 type = OUTBOUND 且匹配搜索词（统一 normStr 内核）
 async function loadReturnList(term){
+  if(!ensureAuthorizedAccess()) return;
   await ensureLogsLoadedForReturn();
+
+  const normTerm = normStr(term);
 
   const list = (_logsCache || []).filter(r=>{
     if(r.type !== "OUTBOUND") return false;
     const combined = [
       r.model, r.name, r.storage,
       r.recipient, r.operator, r.comments
-    ].join("|").toLowerCase();
-    return combined.includes(term);
+    ].join("|");
+    return normStr(combined).includes(normTerm);
   });
 
   renderReturnList(list, term);
@@ -1892,6 +1971,11 @@ const transferSearch=byId("transfer-search");
 const transferResult=byId("transfer-result");
 
 transferSearch.addEventListener("keyup",(e)=>{
+  if(!ensureAuthorizedAccess()){
+    transferSearch.value="";
+    transferResult.innerHTML="";
+    return;
+  }
   const raw=e.target.value||"";
   if(!normStr(raw)){
     transferResult.innerHTML="";
@@ -2269,7 +2353,75 @@ const LOGS_PER_PAGE = 100;  // 每页显示 100 条
 let _logsFiltered = [];
 let _logsLoadedOnce = false;
 
+function resetDataState(){
+  masterItemList=[];
+  stockByKey={};
+  _overviewPage = 1;
+  _overviewFiltered=[];
+  _logsCache=[];
+  _logsPage = 1;
+  _logsFiltered=[];
+  _logsLoadedOnce=false;
+  _returnList=[];
+}
+
+function clearRenderedPanels(){
+  const pairs=[
+    "inbound-result","outbound-result","transfer-result",
+    "return-result","inventory-table-body","overview-pager",
+    "logs-table-body","logs-pager"
+  ];
+  pairs.forEach(id=>{ const el=byId(id); if(el) el.innerHTML=""; });
+  const logsEmpty=byId("logs-empty");
+  if(logsEmpty) logsEmpty.classList.remove("hidden");
+}
+
+function setDisabled(ids=[], disabled=true){
+  ids.forEach(id=>{
+    const el=byId(id);
+    if(!el) return;
+    el.disabled=disabled;
+    el.classList.toggle("disabled", disabled);
+  });
+}
+
+function syncAccessUI(){
+  const allow=AUTHORIZED;
+  setDisabled([
+    "inbound-search","outbound-search","transfer-search","return-search",
+    "overview-search","btn-inbound-showall","btn-outbound-showall",
+    "btn-transfer-showall","btn-export-overview","btn-refresh",
+    "btn-logs-export","btn-logs-refresh","btn-logs-datefilter",
+    "logs-search","logs-type","logs-date-start","logs-date-end"
+  ], !allow);
+
+  ["overview-tab","logs-tab"].forEach(id=>{
+    const el=byId(id);
+    if(el){
+      el.disabled=!allow;
+      el.classList.toggle("disabled", !allow);
+    }
+  });
+
+  if(!allow){
+    resetDataState();
+    clearRenderedPanels();
+  }
+}
+
+async function handleAuthorizedSession(){
+  syncAccessUI();
+  await loadOverview();
+  startVersionPolling();
+}
+
+function handleUnauthorizedSession(){
+  stopVersionPolling();
+  syncAccessUI();
+}
+
 async function reloadLogs(){
+  if(!ensureAuthorizedAccess()) return;
   const btn = byId("btn-logs-refresh");
   const oldHTML = btn ? btn.innerHTML : "";
   if(btn){
@@ -2305,6 +2457,15 @@ async function reloadLogs(){
 }
 
 function applyLogsFilter(){
+  if(!ensureAuthorizedAccess({notify:false})){
+    const body = byId("logs-table-body");
+    if(body) body.innerHTML = "";
+    const pager = byId("logs-pager");
+    if(pager) pager.innerHTML = "";
+    const empty = byId("logs-empty");
+    if(empty) empty.classList.remove("hidden");
+    return;
+  }
   const term = (byId("logs-search").value||"").trim().toLowerCase();
   const type = byId("logs-type").value;
   const d1   = byId("logs-date-start").value;
@@ -2456,6 +2617,7 @@ function changeLogsPage(delta){
 
 // 导出日志 CSV（当前筛选结果）
 function exportLogs(){
+  if(!ensureAuthorizedAccess()) return;
   if(!_logsFiltered || _logsFiltered.length === 0){
     showNotification(LANG==='en'?"No data to export":"无可导出的记录","warning");
     return;
